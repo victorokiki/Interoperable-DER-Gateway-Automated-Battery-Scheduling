@@ -117,3 +117,11 @@ def test_a_developers_copy_is_unchanged(monkeypatch):
     client = grid.app.test_client()
     assert client.get("/dcap").status_code == 200
     assert client.post("/simulate/idle", environ_overrides=INTERNET).status_code == 200      # open, as before
+
+
+def test_pages_say_secure_when_the_hosts_proxy_ended_https(monkeypatch):
+    client = load(monkeypatch, True).app.test_client()
+    behind_proxy = client.get("/login", environ_overrides=INTERNET, headers={"X-Forwarded-Proto": "https"}).get_data(as_text=True)
+    assert "Secure connection (TLS)" in behind_proxy and "Unencrypted" not in behind_proxy
+    plain = client.get("/login", environ_overrides=INTERNET).get_data(as_text=True)
+    assert "Unencrypted" in plain                                                            # no header, no claim of security

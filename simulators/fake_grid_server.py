@@ -139,6 +139,12 @@ INTERNAL_PORT = int(os.environ.get("INTERNAL_PORT", "5001"))
 MIN_PUBLIC_PASSWORD_LEN = 12
 LOGIN_MAX_FAILURES, LOGIN_WINDOW_SEC = 5, 900
 _PUBLIC_PREFIXES = ("/login", "/logout", "/dashboard", "/api/", "/reports/", "/static/")
+
+if PUBLIC_MODE:
+    # The host's proxy ends the HTTPS connection and says so in X-Forwarded-Proto; believe it
+    # (only that header), so the pages show "Secure connection" instead of "Unencrypted".
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1)
 _login_failures: dict = {}
 
 
