@@ -97,8 +97,9 @@ class SupabaseStore:
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
             if not re.fullmatch(r"[A-Za-z0-9_.\-]+", self.key):
                 # Typically a copy of the masked key (dots) or a stray space or line break from pasting.
+                bad = sorted({f"U+{ord(c):04X}" for c in self.key if not re.fullmatch(r"[A-Za-z0-9_.\-]", c)})
                 raise StoreError("SUPABASE_SECRET_KEY contains characters a key never has "
-                                 f"(length {len(self.key)}); copy it again from Supabase with its Copy button") from None
+                                 f"({', '.join(bad)}; length {len(self.key)}); copy it again from Supabase with its Copy button") from None
             raise StoreError(f"the account database could not be reached ({type(e).__name__})") from None
 
     def create(self, username: str, password_hash: str) -> bool:
@@ -113,5 +114,5 @@ class SupabaseStore:
 
 
 def store_from_environment(environ) -> "SupabaseStore | None":
-    url, key = (environ.get("SUPABASE_URL") or "").strip(), (environ.get("SUPABASE_SECRET_KEY") or "").strip()
+    url, key = (environ.get("SUPABASE_URL") or "").strip(), re.sub(r"\s+", "", environ.get("SUPABASE_SECRET_KEY") or "")
     return SupabaseStore(url, key) if url.startswith("https://") and key else None
