@@ -13,3 +13,7 @@ create table if not exists public.viewer_accounts (
 
 alter table public.viewer_accounts enable row level security;
 revoke all on table public.viewer_accounts from anon, authenticated;
+
+-- The server's role needs exactly this much. (Supabase projects created with "Automatically expose new
+-- tables" turned off, as recommended, grant nothing by default, so the grant is stated explicitly.)
+grant select, insert on table public.viewer_accounts to service_role;
