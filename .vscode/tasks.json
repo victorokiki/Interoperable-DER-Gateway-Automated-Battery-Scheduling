@@ -1,0 +1,157 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Demo: battery simulator (Modbus, port 5020)",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "args": ["${workspaceFolder}/simulators/fake_battery.py"],
+      "options": {"cwd": "${workspaceFolder}/.demo", "env": {"PYTHONUNBUFFERED": "1"}},
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "demo",
+        "pattern": {"regexp": "^\\b$"},
+        "background": {"activeBegins": true, "beginsPattern": "^", "endsPattern": "listening on port 5020"}
+      },
+      "presentation": {"group": "demo", "panel": "dedicated", "reveal": "always", "clear": true}
+    },
+    {
+      "label": "Demo: utility simulator + dashboard (port 5001)",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "args": ["${workspaceFolder}/simulators/fake_grid_server.py"],
+      "options": {"cwd": "${workspaceFolder}/.demo",
+                  "env": {"PYTHONUNBUFFERED": "1", "SIM_DER_POLL_RATE": "30"}},
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "demo",
+        "pattern": {"regexp": "^\\b$"},
+        "background": {"activeBegins": true, "beginsPattern": "^", "endsPattern": "Grid Server running"}
+      },
+      "presentation": {"group": "demo", "panel": "dedicated", "reveal": "always", "clear": true}
+    },
+    {
+      "label": "Demo: gateway",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "args": ["-m", "capstone"],
+      "options": {"cwd": "${workspaceFolder}/.demo",
+                  "env": {"PYTHONUNBUFFERED": "1", "IEEE_SERVER_URL": "http://127.0.0.1:5001",
+                          "DER_SET_MAX_W": "1000000", "DER_SET_MAX_CHARGE_RATE_W": "1000000",
+                          "DER_SET_MAX_DISCHARGE_RATE_W": "1000000"}},
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "demo",
+        "pattern": {"regexp": "^\\b$"},
+        "background": {"activeBegins": true, "beginsPattern": "^", "endsPattern": "shut down safely"}
+      },
+      "presentation": {"group": "demo", "panel": "dedicated", "reveal": "always", "clear": true}
+    },
+    {
+      "label": "Demo: start all (battery, utility, gateway)",
+      "dependsOn": ["Demo: battery simulator (Modbus, port 5020)",
+                    "Demo: utility simulator + dashboard (port 5001)",
+                    "Demo: gateway"],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    },
+    {
+      "label": "Demo (mutual TLS): utility simulator",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "args": ["${workspaceFolder}/simulators/fake_grid_server.py"],
+      "options": {"cwd": "${workspaceFolder}/.demo",
+                  "env": {"PYTHONUNBUFFERED": "1", "TLS_ENABLED": "1", "SIM_DER_POLL_RATE": "30"}},
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "demo",
+        "pattern": {"regexp": "^\\b$"},
+        "background": {"activeBegins": true, "beginsPattern": "^", "endsPattern": "Grid Server running"}
+      },
+      "presentation": {"group": "demo", "panel": "dedicated", "reveal": "always", "clear": true}
+    },
+    {
+      "label": "Demo (mutual TLS): gateway",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "args": ["-m", "capstone"],
+      "options": {"cwd": "${workspaceFolder}/.demo",
+                  "env": {"PYTHONUNBUFFERED": "1", "IEEE_SERVER_URL": "https://127.0.0.1:5001",
+                          "TLS_CA_CERT": "${workspaceFolder}/certs/ca.crt",
+                          "TLS_CLIENT_CERT": "${workspaceFolder}/certs/client.crt",
+                          "TLS_CLIENT_KEY": "${workspaceFolder}/certs/client.key",
+                          "DER_SET_MAX_W": "1000000", "DER_SET_MAX_CHARGE_RATE_W": "1000000",
+                          "DER_SET_MAX_DISCHARGE_RATE_W": "1000000"}},
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "demo",
+        "pattern": {"regexp": "^\\b$"},
+        "background": {"activeBegins": true, "beginsPattern": "^", "endsPattern": "shut down safely"}
+      },
+      "presentation": {"group": "demo", "panel": "dedicated", "reveal": "always", "clear": true}
+    },
+    {
+      "label": "Demo (mutual TLS): start all",
+      "dependsOn": ["Demo: battery simulator (Modbus, port 5020)",
+                    "Demo (mutual TLS): utility simulator",
+                    "Demo (mutual TLS): gateway"],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    },
+    {
+      "label": "Demo: utility sends charge 300 kW for 2 min",
+      "type": "process",
+      "command": "curl.exe",
+      "args": ["-s", "-X", "POST", "http://127.0.0.1:5001/simulate/charge", "-H", "Content-Type: application/json",
+               "-d", "{\"power_kw\": 300, \"duration_sec\": 120}"],
+      "problemMatcher": [],
+      "presentation": {"reveal": "always", "panel": "shared"}
+    },
+    {
+      "label": "Demo: utility sends discharge 200 kW for 2 min",
+      "type": "process",
+      "command": "curl.exe",
+      "args": ["-s", "-X", "POST", "http://127.0.0.1:5001/simulate/discharge", "-H", "Content-Type: application/json",
+               "-d", "{\"power_kw\": 200, \"duration_sec\": 120}"],
+      "problemMatcher": [],
+      "presentation": {"reveal": "always", "panel": "shared"}
+    },
+    {
+      "label": "Demo: utility clears its events",
+      "type": "process",
+      "command": "curl.exe",
+      "args": ["-s", "-X", "POST", "http://127.0.0.1:5001/simulate/idle"],
+      "problemMatcher": [],
+      "presentation": {"reveal": "always", "panel": "shared"}
+    },
+    {
+      "label": "Demo: what the utility received (responses and reports)",
+      "type": "process",
+      "command": "curl.exe",
+      "args": ["-s", "http://127.0.0.1:5001/status"],
+      "problemMatcher": [],
+      "presentation": {"reveal": "always", "panel": "shared"}
+    },
+    {
+      "label": "Tests: run all (pytest)",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "args": ["-m", "pytest", "-q", "-p", "no:cacheprovider", "-W", "ignore::DeprecationWarning"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "group": {"kind": "test", "isDefault": true},
+      "problemMatcher": [],
+      "presentation": {"reveal": "always", "panel": "dedicated", "clear": true}
+    },
+    {
+      "label": "Tests: audit harness (known findings)",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "args": ["-m", "pytest", "tests/audit/repro_findings.py", "-q", "-rxX", "-p", "no:cacheprovider",
+               "-W", "ignore::DeprecationWarning"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "group": "test",
+      "problemMatcher": [],
+      "presentation": {"reveal": "always", "panel": "dedicated", "clear": true}
+    }
+  ]
+}

@@ -2,21 +2,29 @@
 capstone/reliability.py
 Reliability State Manager — 5-state FSM (Requirement F-05)
 
-States (per Sprint 1 Report, Table 2 — DEGRADED kept as named in the
-report; rename to DERATED is a one-line change if the team confirms it
-with the partner):
+States (per Sprint 1 Report, Table 2, renamed per Sprint 2 partner
+feedback — DERATED more accurately describes a system operating with
+reduced capabilities than DEGRADED, which incorrectly implied failure):
 
     CONNECTED     Normal operation. Grid reachable.
-    DEGRADED      Grid contact is intermittent (some missed polls),
+    DERATED       Grid contact is intermittent (some missed polls),
                   but not yet past the disconnect threshold.
-    DISCONNECTED  Grid unreachable. Still within the offline grace
-                  period and no schedule decision has been made yet.
+    DISCONNECTED  Grid unreachable, and the battery is not confirmed to
+                  be doing either of the two things below yet (within
+                  the offline grace period with no approved schedule, or
+                  the BMS has not confirmed the setpoint).
     AUTONOMOUS    Grid unreachable, but a previously-approved stored
-                  schedule is still valid and is being executed to
-                  completion.
+                  schedule is still valid and the BMS has confirmed it
+                  is being executed (Sprint 2 Table 1: continue until
+                  completion or expiry), or, between events, the
+                  utility's DefaultDERControl is.
     SAFE_IDLE     Grid unreachable beyond the grace period AND no
-                  valid stored schedule remains — battery is forced
-                  to a safe idle state.
+                  valid stored schedule remains — the BMS has confirmed
+                  the battery is at the safe 0 kW setpoint.
+
+The disconnected sub-states follow what the scheduler's dispatch arbiter
+actually decided and whether the BMS confirmed it (GatewayState.authority),
+so the FSM never claims control that is only intended.
 
 IMPORTANT — this deliberately implements the partner's stated
 preference (Sprint 1 feedback email, item 3): "continue executing
@@ -43,10 +51,14 @@ log = logging.getLogger("reliability")
 
 class ReliabilityState(Enum):
     CONNECTED    = "CONNECTED"
-    DEGRADED     = "DEGRADED"
+    DERATED      = "DERATED"
     DISCONNECTED = "DISCONNECTED"
     AUTONOMOUS   = "AUTONOMOUS"
     SAFE_IDLE    = "SAFE_IDLE"
+
+
+# Grid unreachable: which of these applies depends on the dispatch decision.
+_UNREACHABLE = (ReliabilityState.DISCONNECTED, ReliabilityState.AUTONOMOUS, ReliabilityState.SAFE_IDLE)
 
 
 class ReliabilityManager:
@@ -60,7 +72,7 @@ class ReliabilityManager:
     """
 
     def __init__(self, config: dict, state, audit_log=None, event_bus=None,
-                 degraded_after_n_misses: int = 1,
+                 derated_after_n_misses: int = 1,
                  disconnected_after_n_misses: int = 3):
         self.state = state  # GatewayState — provides seconds_since_grid_contact()
         self.offline_timeout = config["offline_timeout_sec"]
@@ -69,7 +81,7 @@ class ReliabilityManager:
 
         self.reliability_state = ReliabilityState.CONNECTED
         self.consecutive_missed_polls = 0
-        self.degraded_after_n_misses = degraded_after_n_misses
+        self.derated_after_n_misses = derated_after_n_misses
         self.disconnected_after_n_misses = disconnected_after_n_misses
 
     # ── Inputs from IEEEClient ──────────────────────────────────
@@ -81,29 +93,54 @@ class ReliabilityManager:
     def record_poll_failure(self):
         self.consecutive_missed_polls += 1
         if self.consecutive_missed_polls >= self.disconnected_after_n_misses:
-            self._evaluate_disconnected_substate(has_valid_schedule=False)
-        elif self.consecutive_missed_polls >= self.degraded_after_n_misses:
-            self._transition(ReliabilityState.DEGRADED)
+            self._evaluate_disconnected_substate()
+        elif self.consecutive_missed_polls >= self.derated_after_n_misses:
+            self._transition(ReliabilityState.DERATED)
 
     # ── Input from Scheduler (does a valid stored schedule exist?) ──
 
     def evaluate_with_schedule_status(self, has_valid_schedule: bool):
-        """Call periodically (e.g. from the watchdog) once disconnected,
-        passing whether the Scheduler still has a valid, not-yet-expired
-        event to keep executing. This is what decides AUTONOMOUS vs
-        SAFE_IDLE — never an ML-generated decision in this design."""
-        if self.reliability_state in (
-            ReliabilityState.DISCONNECTED,
-            ReliabilityState.AUTONOMOUS,
-        ):
+        """Re-evaluate once disconnected with an explicit answer to "is a
+        valid approved schedule being executed?". Normal operation doesn't
+        need this: record_poll_failure() reads the arbiter's decision. This
+        decides AUTONOMOUS vs SAFE_IDLE — never an ML-generated decision in
+        this design."""
+        if self.reliability_state in _UNREACHABLE:
             self._evaluate_disconnected_substate(has_valid_schedule)
 
-    def _evaluate_disconnected_substate(self, has_valid_schedule: bool):
-        secs_offline = self.state.seconds_since_grid_contact()
+    # ── Input from the Scheduler, every tick ────────────────────
 
-        if has_valid_schedule:
+    def refresh(self):
+        """Re-evaluate the grid-unreachable sub-state from the arbiter's
+        latest decision (GatewayState.authority). The scheduler calls this
+        whenever it publishes a decision, so AUTONOMOUS / SAFE_IDLE /
+        DISCONNECTED change with the dispatch they describe instead of at
+        the next failed poll, up to a poll interval later."""
+        if self.reliability_state in _UNREACHABLE:
+            self._evaluate_disconnected_substate()
+
+    def _evaluate_disconnected_substate(self, has_valid_schedule: bool | None = None):
+        """AUTONOMOUS while the arbiter runs an approved event and the BMS has
+        confirmed its setpoint; SAFE_IDLE once, beyond the grace period, the
+        arbiter holds 0 kW and the BMS has confirmed it; otherwise
+        DISCONNECTED. An explicit has_valid_schedule stands in for the
+        arbiter's decision (and is taken as confirmed)."""
+        secs_offline = self.state.seconds_since_grid_contact()
+        if has_valid_schedule is None:
+            decision = getattr(self.state, "authority", None) or {}
+            confirmed = bool(decision.get("confirmed"))
+            # An approved event, or the utility's DefaultDERControl between events:
+            # both are the utility's standing instructions, kept through the outage.
+            approved = decision.get("authority") in ("approved_schedule", "default_control")
+            running_schedule = approved and confirmed
+            idle_confirmed = not approved and confirmed
+        else:
+            running_schedule = has_valid_schedule
+            idle_confirmed = not has_valid_schedule
+
+        if running_schedule:
             self._transition(ReliabilityState.AUTONOMOUS)
-        elif secs_offline > self.offline_timeout:
+        elif secs_offline > self.offline_timeout and idle_confirmed:
             self._transition(ReliabilityState.SAFE_IDLE)
         else:
             self._transition(ReliabilityState.DISCONNECTED)

@@ -117,24 +117,24 @@ def wipe_schedule_db():
         db_path.unlink()
 
 
-def get_executed_status(mrid: str):
-    """Read an event's 'executed' column directly from the schedule DB.
-    -1/1 = start attempted/succeeded, -2/2 = stop attempted/succeeded, 0 = pending/retry."""
+def get_applied_status(mrid: str):
+    """Read an event's lifecycle status and whether its setpoint was ever
+    confirmed written (applied_at) directly from the schedule DB."""
     db_path = PROJECT_ROOT / "schedule_store" / "schedule.db"
     conn = sqlite3.connect(str(db_path))
-    row = conn.execute("SELECT executed FROM events WHERE mrid=?", (mrid,)).fetchone()
+    row = conn.execute("SELECT status, applied_at FROM events WHERE mrid=?", (mrid,)).fetchone()
     conn.close()
-    return row[0] if row else None
+    return (row[0], row[1] is not None) if row else (None, False)
 
 
-async def wait_until_started(mrid: str, timeout: int = 10):
-    """Poll the DB until an event reaches executed=1 (successfully started),
-    or the timeout expires. Returns the final status seen."""
+async def wait_until_applied(mrid: str, timeout: int = 10):
+    """Poll the DB until the event's setpoint has been applied, or the
+    timeout expires. Returns the final (status, applied) seen."""
     deadline = time.time() + timeout
-    status = get_executed_status(mrid)
-    while time.time() < deadline and status != 1:
+    status = get_applied_status(mrid)
+    while time.time() < deadline and not status[1]:
         await asyncio.sleep(0.5)
-        status = get_executed_status(mrid)
+        status = get_applied_status(mrid)
     return status
 
 
@@ -242,10 +242,10 @@ async def main():
         banner("Confirming outage-time events were retried to success")
         for label, mrid in [("baseline CHARGE", baseline_mrid),
                              ("outage DISCHARGE", outage_mrid)]:
-            status = await wait_until_started(mrid, timeout=10)
-            print(f"  {label} ({mrid}): executed={status}")
-            assert status == 1, (
-                f"{label} event {mrid} never reached executed=1 after reconnect — "
+            status, applied = await wait_until_applied(mrid, timeout=10)
+            print(f"  {label} ({mrid}): status={status} applied={applied}")
+            assert applied, (
+                f"{label} event {mrid} was never applied after reconnect — "
                 f"the retry loop did not actually recover it (final status={status})"
             )
         print("PASS: both events that failed during the outage were "

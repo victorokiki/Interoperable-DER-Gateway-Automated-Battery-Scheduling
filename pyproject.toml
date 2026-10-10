@@ -7,7 +7,7 @@ authors = [
     {name = "Edward Amponsah", email = "eaa79@sfu.ca"},
     {name = "Emmanuel Kwesi Padi", email = "ekp6@sfu.ca"},
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.14"
 dependencies = [
     "pymodbus==3.6.9",
     "aiohttp>=3.11.0",

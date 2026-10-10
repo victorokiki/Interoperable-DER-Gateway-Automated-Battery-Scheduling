@@ -30,6 +30,24 @@ class GatewayState:
         self.operating_state = None
         self.operating_status = None
         self.last_status_poll = None
+        # Set by the Scheduler's dispatch arbiter every tick: who has
+        # authority over the setpoint, what it wants and whether the BMS
+        # confirmed it ({"authority", "mrid", "desired_kw", "reason",
+        # "until", "confirmed"}).
+        self.authority = None
+        # Set by ModbusDriver from what the BMS reports (SPC100644 Rev 03).
+        self.commanded_kw = None        # setpoint the BMS last confirmed holding (app sign)
+        self.limits_kw = None           # {"max_charge_kw", "max_discharge_kw"} from 31019 / 31021
+        self.measured_kw = None         # measured power 31009 (AC) / 31007 (DC), app sign
+        self.control_mode = None        # 31036: "Normal" or "User-Controlled"
+        self.dispatch_kind = None       # "ac_active_power" (41009) or "dc_power_target" (41007)
+        self.bms_heartbeat_stale = False
+        self.last_status_poll_at = None
+        self.operating_state_code = None  # 31000 as read at the last status poll
+        self.measured_kvar = None       # measured reactive power 31011 (AC), kVAR, app sign
+        # Set by IEEEClient from the utility server's Time resource: seconds to
+        # add to this machine's clock to get the utility's (event windows).
+        self.clock_offset_sec = 0.0
 
     def mark_grid_lost(self):
         self.grid_connected = False

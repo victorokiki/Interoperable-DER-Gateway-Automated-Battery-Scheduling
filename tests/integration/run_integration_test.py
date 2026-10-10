@@ -185,7 +185,9 @@ async def main():
         async with aiohttp.ClientSession() as session:
             async with session.post(f"{GRID_URL}/simulate/discharge",
                                      json={"power_kw": 250, "duration_sec": 40}) as r:
-                print("Injected:", await r.json())
+                discharge = (await r.json())["event"]
+                print("Injected:", discharge)
+        discharge_end = discharge["start"] + discharge["duration"]
 
         await asyncio.sleep(CONFIG["ieee_poll_interval_sec"] + 3)
         regs = await read_battery_registers()
@@ -203,21 +205,30 @@ async def main():
         print(" this only confirms no NEW event gets queued.)")
         await asyncio.sleep(CONFIG["ieee_poll_interval_sec"] + 1)
 
-        # ── TEST 4: Grid loss -> safe IDLE fallback ──────────────
-        banner("TEST 4: Kill grid server -> expect forced safe IDLE")
+        # ── TEST 4: Grid loss -> approved event continues, then Safe Idle ──
+        # Sprint 2 Table 1: during a communication loss the last approved
+        # valid schedule keeps running until completion or expiry; Safe
+        # Idle applies once no valid schedule remains.
+        banner("TEST 4: Kill grid server -> approved event continues, then Safe IDLE")
         grid_proc.terminate()
         grid_proc.wait(timeout=5)
-        wait_s = CONFIG["offline_timeout_sec"] + 15
-        print(f"Grid server killed. Waiting {wait_s}s for the watchdog "
-              f"to detect it and force IDLE...")
+        wait_s = CONFIG["offline_timeout_sec"] + 3
+        print(f"Grid server killed. Waiting {wait_s}s (past the offline timeout)...")
         await asyncio.sleep(wait_s)
 
         print("state.grid_connected:", state.grid_connected)
         regs = await read_battery_registers()
         print("Battery registers now:", regs)
         assert state.grid_connected is False, "state should show grid disconnected"
-        assert regs["mode"] == 0, f"Expected IDLE(0) after grid loss, got {regs['mode']}"
-        print("PASS: grid loss correctly forced the battery to safe IDLE.")
+        assert time.time() < discharge_end, "test timing: the discharge event already ended"
+        assert regs["mode"] == 2, f"Expected the approved DISCHARGE(2) to continue, got {regs['mode']}"
+        print("PASS: the approved event kept running through the grid loss.")
+
+        await asyncio.sleep(max(0.0, discharge_end - time.time()) + 3)
+        regs = await read_battery_registers()
+        print("Battery registers after the event's end:", regs)
+        assert regs["mode"] == 0, f"Expected IDLE(0) once no valid schedule remains, got {regs['mode']}"
+        print("PASS: Safe IDLE once the approved event expired during the grid loss.")
 
         banner("ALL INTEGRATION TESTS PASSED")
 

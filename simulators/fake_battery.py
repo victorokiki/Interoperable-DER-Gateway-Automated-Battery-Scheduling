@@ -9,16 +9,31 @@ layout.
 
 Listens on port 5020 (the spec's default BMS Control and Monitoring
 Interface port) and:
-  - implements the Off/Standby/On operating-command state machine
+  - implements the Off/Standby/On operating-command state machine as
+    documented (spec p.16): Standby from Off or On, On only from
+    Standby, Off only from Standby
   - accepts DC Power Target (DC-configured) or Active Power Setpoint
     (AC-configured) writes and logs them in human-readable form
+  - publishes Charge / Discharge Power Limits (31019 / 31021, spec
+    §6.2.6) and the measured power (31009 AC / 31007 DC), which follows
+    the setpoint while On and, AC-configured, while the dispatch modes
+    41018-41021 select System-Level, Grid-Feeding, Fixed Active Power
+    (§6.3; they power up as 0 = Invalid unless SIM_DISPATCH_MODES says
+    otherwise)
+  - acts on the Operating Command only when 41000 changes (the ICD does not
+    say; the gateway handles either, working answer E2)
   - simulates a slowly drifting State of Charge based on commanded power
   - increments its own heartbeat register every second (spec Sec 4.5.1)
   - configurable as DC- or AC-configured via BMS_TYPE env var
+  - SIMULATOR ONLY, not in the ICD: holding register 41090 injects
+    conditions for tests (1 Fault, 2 the Fault clears to Standby, 3 freeze
+    the heartbeat, 4 resume it, 5 Off as another controller would leave it)
 
 Usage:
     python simulators/fake_battery.py
     BMS_TYPE=dc python simulators/fake_battery.py   # simulate a DC-configured unit
+    CHARGE_LIMIT_KW=250 DISCHARGE_LIMIT_KW=300 python simulators/fake_battery.py
+    SIM_DISPATCH_MODES=0,1,2,1 python simulators/fake_battery.py   # 41018-41021 at power-up (here P-f droop)
 """
 
 import os
@@ -40,11 +55,18 @@ REG_CLEAR_ALERTS        = 1001  # Holding
 REG_OPERATOR_HEARTBEAT  = 1002  # Holding
 REG_DC_POWER_TARGET     = 1007  # Holding, int32 (2 regs), DC-configured only
 REG_ACTIVE_POWER_SETPT  = 1009  # Holding, int32 (2 regs), AC-configured only
+REG_DISPATCH_MODES      = 1018  # Holding: 41018 scope, 41019 grid mode, 41020 active, 41021 reactive
+REG_SIM_CONTROL         = 1090  # Holding, SIMULATOR ONLY (not in the ICD): test hooks
 
 REG_OPERATING_STATE     = 1000  # Input: enum
 REG_OPERATING_STATUS    = 1001  # Input: enum
 REG_HEARTBEAT           = 1003  # Input: BMS's own heartbeat, incr 1/s
 REG_STATE_OF_CHARGE     = 1004  # Input: uint16, x10
+REG_DC_POWER            = 1007  # Input: DC Power (measured), int32 kW
+REG_ACTIVE_POWER        = 1009  # Input: Active Power (measured, AC), int32 kW
+REG_CHARGE_POWER_LIMIT  = 1019  # Input: int32 kW, P < 0
+REG_DISCHARGE_POWER_LIMIT = 1021  # Input: int32 kW, P > 0
+REG_CONTROL_MODE        = 1036  # Input: 0=Normal, 1=User-Controlled
 REG_BMS_TYPE            = 1038  # Input: 0=DC, 1=AC
 REG_BMS_ALERTS          = 1039  # Input: bitfield, uint32 (2 regs)
 
@@ -55,6 +77,12 @@ OPERATING_STATE_NAMES = {
     5: "Shutting Down", 6: "Transitioning to Standby", 7: "Turning Off",
     8: "Waiting for Connection", 9: "Waiting for Disconnection", 10: "Fault",
 }
+DISPATCH_MODE_NAMES = (
+    ("41018 Grid Control Scope", {0: "System-Level", 1: "Per-Array"}),
+    ("41019 Grid Mode", {0: "Invalid", 1: "Grid-Feeding"}),
+    ("41020 Active Power Control Mode", {0: "Invalid", 1: "Fixed Active Power", 2: "P-f Droop"}),
+    ("41021 Reactive Power Control Mode", {0: "Invalid", 1: "Fixed Q", 2: "Fixed PF"}),
+)
 
 BLOCK_SIZE = 1100  # comfortably covers all addresses used above
 
@@ -77,20 +105,58 @@ hr_store = ModbusSequentialDataBlock(0, [0] * BLOCK_SIZE)  # holding (control)
 ir_store = ModbusSequentialDataBlock(0, [0] * BLOCK_SIZE)  # input (status)
 
 bms_type = BMS_TYPE_AC if os.environ.get("BMS_TYPE", "ac").lower() == "ac" else BMS_TYPE_DC
+charge_limit_kw = int(os.environ.get("CHARGE_LIMIT_KW", "1000"))
+discharge_limit_kw = int(os.environ.get("DISCHARGE_LIMIT_KW", "1000"))
 ir_store.setValues(REG_BMS_TYPE, [bms_type])
 ir_store.setValues(REG_OPERATING_STATE, [1])   # start Off
 ir_store.setValues(REG_OPERATING_STATUS, [1])  # Normal
 ir_store.setValues(REG_STATE_OF_CHARGE, [500])  # 50.0%
 ir_store.setValues(REG_BMS_ALERTS, [0, 0])
+ir_store.setValues(REG_CONTROL_MODE, [0])      # Normal control mode
+ir_store.setValues(REG_CHARGE_POWER_LIMIT, encode_int32(-charge_limit_kw))
+ir_store.setValues(REG_DISCHARGE_POWER_LIMIT, encode_int32(discharge_limit_kw))
+hr_store.setValues(REG_DISPATCH_MODES,
+                   [int(v) for v in os.environ.get("SIM_DISPATCH_MODES", "0,0,0,0").split(",")])
 
 last_values = {
     "operating_command": -1,
     "power_setpoint": None,
     "clear_alerts": -1,
+    "dispatch_modes": None,
 }
 _soc_x10 = 500.0
 _heartbeat = 0
+_heartbeat_frozen = False
 _last_hw_power_kw = 0.0
+
+
+def sim_control():
+    """SIMULATOR ONLY: act on a test hook written to 41090, then clear it."""
+    global _heartbeat_frozen
+    action = hr_store.getValues(REG_SIM_CONTROL, 1)[0]
+    if not action:
+        return
+    hr_store.setValues(REG_SIM_CONTROL, [0])
+    state = ir_store.getValues(REG_OPERATING_STATE, 1)[0]
+    if action == 1:
+        ir_store.setValues(REG_OPERATING_STATE, [10])
+        print(f"\n{'='*55}\n  [BATTERY SIM] (test hook) FAULT: charge and discharge prohibited\n{'='*55}\n")
+    elif action == 2 and state == 10:
+        ir_store.setValues(REG_OPERATING_STATE, [2])
+        print(f"\n{'='*55}\n  [BATTERY SIM] (test hook) the Fault cleared -> Standby\n{'='*55}\n")
+    elif action == 3:
+        _heartbeat_frozen = True
+        print("  [BATTERY SIM] (test hook) heartbeat 31003 frozen\n")
+    elif action == 4:
+        _heartbeat_frozen = False
+        print("  [BATTERY SIM] (test hook) heartbeat 31003 incrementing again\n")
+    elif action == 5:
+        hr_store.setValues(REG_OPERATING_COMMAND, [0])
+        last_values["operating_command"] = 0
+        ir_store.setValues(REG_OPERATING_STATE, [1])
+        print(f"\n{'='*55}\n  [BATTERY SIM] (test hook) another controller: Standby, then Off\n{'='*55}\n")
+    else:
+        print(f"  [BATTERY SIM] (test hook) {action} ignored in state {OPERATING_STATE_NAMES.get(state, state)}")
 
 
 def simulate_and_log():
@@ -105,21 +171,44 @@ def simulate_and_log():
 
     tick = 0
     while True:
+        sim_control()
+
+        # --- Dispatch modes (AC-configured, spec §6.3) ---
+        modes = tuple(hr_store.getValues(REG_DISPATCH_MODES, 4))
+        if modes != last_values["dispatch_modes"]:
+            last_values["dispatch_modes"] = modes
+            print("  [BATTERY SIM] dispatch modes: " + ", ".join(
+                f"{name} {labels.get(value, value)}" for (name, labels), value in zip(DISPATCH_MODE_NAMES, modes)))
+
         # --- Operating Command -> Operating State transition ---
         cmd = hr_store.getValues(REG_OPERATING_COMMAND, 1)[0]
         if cmd != last_values["operating_command"]:
-            if cmd == 2:
-                ir_store.setValues(REG_OPERATING_STATE, [4])  # On
+            state = ir_store.getValues(REG_OPERATING_STATE, 1)[0]
+            name = OPERATING_STATE_NAMES.get(state, state)
+            if cmd == 2 and state == 2:
+                ir_store.setValues(REG_OPERATING_STATE, [4])  # Standby -> On
                 print(f"\n{'='*55}\n  [BATTERY SIM] Operating Command -> On\n{'='*55}\n")
-            elif cmd == 1:
-                ir_store.setValues(REG_OPERATING_STATE, [2])  # Standby
+            elif cmd == 1 and state in (1, 4):
+                ir_store.setValues(REG_OPERATING_STATE, [2])  # Off/On -> Standby
                 print(f"\n{'='*55}\n  [BATTERY SIM] Operating Command -> Standby "
                       f"(power flow halted)\n{'='*55}\n")
-                hr_store.setValues(power_reg, encode_int32(0))
-            elif cmd == 0:
-                ir_store.setValues(REG_OPERATING_STATE, [1])  # Off
+            elif cmd == 0 and state == 2:
+                ir_store.setValues(REG_OPERATING_STATE, [1])  # Standby -> Off
                 print(f"\n{'='*55}\n  [BATTERY SIM] Operating Command -> Off\n{'='*55}\n")
+            elif cmd in (0, 1, 2):
+                print(f"  [BATTERY SIM] Operating Command {cmd} ignored in state {name} "
+                      f"(spec p.16: Off -> Standby -> On)")
             last_values["operating_command"] = cmd
+
+        # Power flows only while On (and, AC-configured, in fixed active-power
+        # dispatch); the measured power follows the setpoint. Outside On the
+        # limits read 0 (spec §6.2.4: set to 0 to halt power flow).
+        on = ir_store.getValues(REG_OPERATING_STATE, 1)[0] == 4
+        flowing = on and (bms_type == BMS_TYPE_DC or modes[:3] == (0, 1, 1))
+        measured_reg = REG_DC_POWER if bms_type == BMS_TYPE_DC else REG_ACTIVE_POWER
+        ir_store.setValues(measured_reg, hr_store.getValues(power_reg, 2) if flowing else [0, 0])
+        ir_store.setValues(REG_CHARGE_POWER_LIMIT, encode_int32(-charge_limit_kw) if on else [0, 0])
+        ir_store.setValues(REG_DISCHARGE_POWER_LIMIT, encode_int32(discharge_limit_kw) if on else [0, 0])
 
         # --- Power setpoint writes (hardware sign convention) ---
         raw = hr_store.getValues(power_reg, 2)
@@ -147,7 +236,7 @@ def simulate_and_log():
         last_values["clear_alerts"] = clear
 
         # --- Drift SoC based on last known power direction (cosmetic) ---
-        if tick % 10 == 0:  # every ~5s at 0.5s tick
+        if tick % 10 == 0 and flowing:  # every ~5s at 0.5s tick, only while power flows
             if _last_hw_power_kw < 0:      # charging
                 _soc_x10 = min(1000.0, _soc_x10 + 1)
             elif _last_hw_power_kw > 0:     # discharging
@@ -155,7 +244,7 @@ def simulate_and_log():
             ir_store.setValues(REG_STATE_OF_CHARGE, [int(_soc_x10)])
 
         # --- BMS heartbeat, increments every ~1s ---
-        if tick % 2 == 0:
+        if tick % 2 == 0 and not _heartbeat_frozen:
             _heartbeat = (_heartbeat + 1) & 0xFFFF
             ir_store.setValues(REG_HEARTBEAT, [_heartbeat])
 
