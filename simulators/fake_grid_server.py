@@ -127,16 +127,18 @@ DEMO_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "invinity2026")
 DEFAULT_DEMO_PASSWORD = "invinity2026"
 
 # PUBLIC_MODE=1 is for a copy that is reachable from the internet. Only the dashboard, its
-# APIs and its static files answer to the world; the machine-to-machine endpoints (the IEEE
-# 2030.5 server, /simulate/*, /status) answer only to the gateway on the same server, and
-# the server refuses to start with the published demo password.
+# APIs and its static files answer on the public port; the machine-to-machine endpoints (the
+# IEEE 2030.5 server, /simulate/*, /status) answer only on a second port, INTERNAL_PORT, which
+# listens on 127.0.0.1 and is used by the gateway on the same server. Which port a request
+# arrived on is the one thing a proxy cannot fake. The server also refuses to start with the
+# published demo password.
 PUBLIC_MODE = os.environ.get("PUBLIC_MODE", "0") == "1"
 DASHBOARD_HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1")
 DASHBOARD_PORT = int(os.environ.get("DASHBOARD_PORT", "5001"))
+INTERNAL_PORT = int(os.environ.get("INTERNAL_PORT", "5001"))
 MIN_PUBLIC_PASSWORD_LEN = 12
 LOGIN_MAX_FAILURES, LOGIN_WINDOW_SEC = 5, 900
 _PUBLIC_PREFIXES = ("/login", "/logout", "/dashboard", "/api/", "/reports/", "/static/")
-_LOOPBACK = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
 _login_failures: dict = {}
 
 
@@ -149,6 +151,8 @@ def check_public_config() -> None:
                          f"{MIN_PUBLIC_PASSWORD_LEN} characters (the demo password is published in the repository).")
     if "DASHBOARD_SECRET_KEY" not in os.environ:
         raise SystemExit("PUBLIC_MODE needs DASHBOARD_SECRET_KEY set, so sessions survive a restart.")
+    if INTERNAL_PORT == DASHBOARD_PORT:
+        raise SystemExit("PUBLIC_MODE needs INTERNAL_PORT to differ from DASHBOARD_PORT.")
 
 
 def _client_ip() -> str:
@@ -172,9 +176,9 @@ def _public_mode_guard():
     if not PUBLIC_MODE:
         return None
     path = request.path
-    if path == "/" or path.startswith(_PUBLIC_PREFIXES) or request.remote_addr in _LOOPBACK:
+    if path == "/" or path.startswith(_PUBLIC_PREFIXES) or request.environ.get("SERVER_PORT") == str(INTERNAL_PORT):
         return None
-    abort(404)          # a machine endpoint, asked by someone other than the gateway
+    abort(404)          # a machine endpoint, asked on the public port
 
 
 @app.after_request
@@ -1436,4 +1440,11 @@ if __name__ == "__main__":
     print('       -H "Content-Type: application/json" \\')
     print('       -d \'{"power_kw": 500, "duration_sec": 3600}\'')
     print()
+    if PUBLIC_MODE:
+        # The gateway's own entrance: localhost only, never published by the host.
+        from werkzeug.serving import make_server
+        import threading
+        internal = make_server("127.0.0.1", INTERNAL_PORT, app, threaded=True)
+        threading.Thread(target=internal.serve_forever, name="internal-api", daemon=True).start()
+        print(f"Machine endpoints on 127.0.0.1:{INTERNAL_PORT} only; public port {DASHBOARD_PORT} serves the dashboard.")
     app.run(host=DASHBOARD_HOST, port=DASHBOARD_PORT, debug=False, ssl_context=ssl_context)

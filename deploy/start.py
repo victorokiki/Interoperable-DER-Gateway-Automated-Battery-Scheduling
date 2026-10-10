@@ -3,7 +3,8 @@ deploy/start.py
 Runs the whole demo on one server: the battery simulator, the utility simulator with the
 operator dashboard, and the gateway. Used by the Dockerfile; also works on a developer's PC.
 
-Only the dashboard's port ($PORT) is meant to be reachable from outside. The battery
+Only the dashboard's port ($PORT) is meant to be reachable from outside; the machine endpoints
+the gateway uses are on a second port (INTERNAL_PORT) that listens on localhost only. The battery
 (Modbus, port 5020 by default) and the gateway talk to each other over the server's own network only.
 
     PORT                   the dashboard's port (the host sets it; default 10000)
@@ -24,6 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RUNTIME = Path(os.environ.get("RUNTIME_DIR", ROOT / "runtime"))
 PORT = int(os.environ.get("PORT", "10000"))
+INTERNAL_PORT = int(os.environ.get("INTERNAL_PORT", "5001" if PORT != 5001 else "5002"))
 BATTERY_PORT = int(os.environ.get("BATTERY_PORT", "5020"))
 SECRETS = ("DASHBOARD_PASSWORD", "DASHBOARD_SECRET_KEY", "DASHBOARD_USERNAME")
 children: dict = {}
@@ -47,9 +49,9 @@ def without_secrets(env: dict) -> dict:
 def commands() -> dict:
     grid = base_env()
     grid.update(PUBLIC_MODE=os.environ.get("PUBLIC_MODE", "1"), DASHBOARD_HOST=os.environ.get("DASHBOARD_HOST", "0.0.0.0"),
-                DASHBOARD_PORT=str(PORT), SIM_DER_POLL_RATE=os.environ.get("SIM_DER_POLL_RATE", "30"))
+                DASHBOARD_PORT=str(PORT), INTERNAL_PORT=str(INTERNAL_PORT), SIM_DER_POLL_RATE=os.environ.get("SIM_DER_POLL_RATE", "30"))
     gateway = without_secrets(base_env())
-    gateway.update(IEEE_SERVER_URL=f"http://127.0.0.1:{PORT}", DER_SET_MAX_W="1000000",
+    gateway.update(IEEE_SERVER_URL=f"http://127.0.0.1:{INTERNAL_PORT}", DER_SET_MAX_W="1000000",
                    DER_SET_MAX_CHARGE_RATE_W="1000000", DER_SET_MAX_DISCHARGE_RATE_W="1000000")
     battery = without_secrets(base_env())
     battery.update(BATTERY_HOST="127.0.0.1", BATTERY_PORT=str(BATTERY_PORT))      # never reachable from outside the server

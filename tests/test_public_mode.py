@@ -15,12 +15,15 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 INTERNET = {"REMOTE_ADDR": "203.0.113.9"}
-GATEWAY = {"REMOTE_ADDR": "127.0.0.1"}
+INTERNAL = {"SERVER_PORT": "5001"}                     # the localhost-only port the gateway uses
+GATEWAY = INTERNAL
 STRONG = "a-long-new-password-1"
 
 
 def load(monkeypatch, public: bool, password: str = STRONG, secret: bool = True):
     monkeypatch.setenv("PUBLIC_MODE", "1" if public else "0")
+    monkeypatch.setenv("DASHBOARD_PORT", "10000")
+    monkeypatch.setenv("INTERNAL_PORT", "5001")
     monkeypatch.setenv("DASHBOARD_PASSWORD", password)
     if secret:
         monkeypatch.setenv("DASHBOARD_SECRET_KEY", "test-secret-key")
@@ -52,10 +55,13 @@ def test_the_gateway_on_the_same_server_still_reaches_them(monkeypatch):
     assert client.get("/status", environ_overrides=GATEWAY).status_code == 200
 
 
-def test_a_forged_forwarded_header_does_not_make_a_caller_the_gateway(monkeypatch):
+def test_a_caller_that_looks_local_still_cannot_reach_them_on_the_public_port(monkeypatch):
+    """Behind the host's proxy every request can appear to come from 127.0.0.1; only the port counts."""
     client = load(monkeypatch, True).app.test_client()
-    forged = client.get("/status", environ_overrides=INTERNET, headers={"X-Forwarded-For": "127.0.0.1"})
-    assert forged.status_code == 404
+    looks_local = {"REMOTE_ADDR": "127.0.0.1", "SERVER_PORT": "10000"}
+    assert client.get("/status", environ_overrides=looks_local).status_code == 404
+    assert client.get("/status", environ_overrides=looks_local, headers={"X-Forwarded-For": "127.0.0.1"}).status_code == 404
+    assert client.post("/simulate/idle", environ_overrides=looks_local).status_code == 404
 
 
 def test_the_dashboard_still_works_for_the_world(monkeypatch):
@@ -98,6 +104,10 @@ def test_a_public_copy_will_not_start_with_the_published_password(monkeypatch):
         load(monkeypatch, True, password="short").check_public_config()
     with pytest.raises(SystemExit, match="DASHBOARD_SECRET_KEY"):
         load(monkeypatch, True, secret=False).check_public_config()
+    same_ports = load(monkeypatch, True)
+    same_ports.DASHBOARD_PORT = same_ports.INTERNAL_PORT          # the machine endpoints must not share the public port
+    with pytest.raises(SystemExit, match="INTERNAL_PORT"):
+        same_ports.check_public_config()
     load(monkeypatch, True).check_public_config()                                            # a strong password is fine
 
 
