@@ -18,6 +18,14 @@ COPY pyproject.toml dev-requirements.txt ./
 COPY capstone ./capstone
 RUN pip install .
 
+# The gateway identifies itself by a device certificate. Make a throwaway set for this image
+# (never stored in git): new keys with every build, used only between the parts on this server.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssl \
+    && rm -rf /var/lib/apt/lists/*
+COPY certs/generate_dev_certs.sh ./certs/generate_dev_certs.sh
+RUN cd certs && bash generate_dev_certs.sh && chmod -R a+rX /app/certs
+
 COPY simulators ./simulators
 COPY deploy ./deploy
 

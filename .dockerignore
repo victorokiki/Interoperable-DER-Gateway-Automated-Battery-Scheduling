@@ -6,7 +6,8 @@
 .vscode
 runtime
 schedule_store
-certs
+certs/*
+!certs/generate_dev_certs.sh
 tests
 **/__pycache__
 **/*.pyc
