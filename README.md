@@ -48,3 +48,14 @@ Set these environment variables on the host (for example a Render web service bu
 | `DASHBOARD_USERNAME` | optional, default `operator` |
 
 In this public mode the IEEE 2030.5 and `/simulate/*` endpoints answer only to the gateway on the same server, the login is rate-limited, and the demo hint is hidden. The `render.yaml` Blueprint sets all of this up: in Render choose *New > Blueprint* and pick this repository. Point your own domain at the service with a CNAME record. Data lives in the container's temporary disk, so it resets when the service restarts.
+
+## View-only accounts (sign-up)
+
+Visitors can create their own account on the login page (*Create a view-only account*). Such an account can look at every page but cannot send commands, schedule, cancel or use Force Idle; only the operator login (`DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD`) can.
+
+Accounts are kept in your own Supabase project so they survive restarts (the host's disk does not):
+
+1. Create a free project at supabase.com and run `supabase/viewer_accounts.sql` in its SQL Editor.
+2. On the server set `SUPABASE_URL` (Project Settings > API > Project URL) and `SUPABASE_SECRET_KEY` (Project Settings > API Keys > the secret key, which stays on the server).
+
+Without those two variables sign-up is switched off. Only a salted scrypt hash of each password is stored, sign-up is rate-limited per address and per day, and logins are limited to 5 failures per 15 minutes per address.

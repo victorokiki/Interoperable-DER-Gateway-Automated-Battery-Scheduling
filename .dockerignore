@@ -13,3 +13,4 @@ tests
 **/*.pyc
 *.egg-info
 *.docx
+supabase

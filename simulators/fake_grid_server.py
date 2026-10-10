@@ -107,6 +107,10 @@ _spec = importlib.util.spec_from_file_location("dashboard_pages", Path(__file__)
 dashboard_pages = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(dashboard_pages)
 
+_spec_accounts = importlib.util.spec_from_file_location("accounts", Path(__file__).with_name("accounts.py"))
+accounts = importlib.util.module_from_spec(_spec_accounts)
+_spec_accounts.loader.exec_module(accounts)
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("DASHBOARD_SECRET_KEY", secrets.token_hex(32))
 
@@ -138,7 +142,26 @@ DASHBOARD_PORT = int(os.environ.get("DASHBOARD_PORT", "5001"))
 INTERNAL_PORT = int(os.environ.get("INTERNAL_PORT", "5001"))
 MIN_PUBLIC_PASSWORD_LEN = 12
 LOGIN_MAX_FAILURES, LOGIN_WINDOW_SEC = 5, 900
-_PUBLIC_PREFIXES = ("/login", "/logout", "/dashboard", "/api/", "/reports/", "/static/")
+_PUBLIC_PREFIXES = ("/login", "/logout", "/signup", "/dashboard", "/api/", "/reports/", "/static/")
+
+# View-only accounts for people who want to look around. Sign-up is on only when an account
+# database is configured (SUPABASE_URL + SUPABASE_SECRET_KEY); see simulators/accounts.py.
+viewer_store = accounts.store_from_environment(os.environ)
+SIGNUP_ATTEMPTS_PER_IP, SIGNUP_CREATED_PER_IP, SIGNUP_CREATED_PER_DAY = 20, 3, 100
+SIGNUP_WINDOW_SEC = 3600
+_signup_attempts: dict = {}
+_signup_created: dict = {}
+_signup_created_today: list = []
+
+
+def _recent(times: list, window: float) -> list:
+    cutoff = time.time() - window
+    return [t for t in times if t > cutoff]
+
+
+def is_operator() -> bool:
+    """Sessions that predate view-only accounts have no role and are the operator's."""
+    return session.get("role", "operator") == "operator"
 
 if PUBLIC_MODE:
     # The host's proxy ends the HTTPS connection and says so in X-Forwarded-Proto; believe it
@@ -956,6 +979,7 @@ PAGE_STYLE = """
     font-size: 12px; font-weight: 700; margin-bottom: 16px;
   }
   .hint { font-size: 11px; color: var(--faint); margin-top: 18px; }
+  a { color: var(--red-text); } a:hover { text-decoration: underline; }
   .tls-pill {
     display: inline-block; font-size: 11px; font-weight: 700; padding: 5px 12px;
     margin: 4px 0 18px; border: 1px solid currentColor; letter-spacing: 0.04em;
@@ -1029,16 +1053,23 @@ LOGIN_TEMPLATE = """
     <div class="login-panel">
       <div style="position:absolute;top:14px;right:14px"><button type="button" class="btn grey theme-toggle" onclick="toggleTheme()" aria-label="Switch between light and dark mode" title="Switch light / dark"><i class="ico ico-moon"></i><i class="ico ico-sun"></i></button></div>
       <div class="kicker">Interoperable DER Gateway</div>
-      <h1>Log in<span>.</span></h1>
-      <p class="lede">Grid Operator Portal. Sign in to schedule battery dispatch commands.</p>
+      <h1>{% if signup %}Sign up{% else %}Log in{% endif %}<span>.</span></h1>
+      <p class="lede">{% if signup %}Create a view-only account. You can look at every page; only the operator can send commands.{% else %}Grid Operator Portal. Sign in to schedule battery dispatch commands.{% endif %}</p>
       {% if error %}<div class="error" style="margin:18px 0 0">{{ error }}</div>{% endif %}
       <form method="post" class="login-card">
         <label for="username">Username *</label>
-        <input type="text" id="username" name="username" placeholder="Enter your Username" required autofocus>
+        <input type="text" id="username" name="username" placeholder="{% if signup %}Choose a username (3 to 30 characters){% else %}Enter your Username{% endif %}" value="{{ username }}" required autofocus autocomplete="username">
         <label for="password">Password *</label>
-        <input type="password" id="password" name="password" placeholder="Enter your Password" required>
-        <button class="btn" type="submit">Login</button>
+        <input type="password" id="password" name="password" placeholder="{% if signup %}At least 10 characters{% else %}Enter your Password{% endif %}" required autocomplete="{% if signup %}new-password{% else %}current-password{% endif %}">
+        {% if signup %}
+        <label for="confirm">Confirm password *</label>
+        <input type="password" id="confirm" name="confirm" placeholder="Type it again" required autocomplete="new-password">
+        <div style="position:absolute;left:-9999px" aria-hidden="true"><label for="hp_field">Leave this empty</label><input type="text" id="hp_field" name="hp_field" tabindex="-1" autocomplete="off" data-lpignore="true" data-form-type="other"></div>
+        {% endif %}
+        <button class="btn" type="submit">{% if signup %}Create account{% else %}Login{% endif %}</button>
       </form>
+      {% if signup %}<p class="lede" style="margin-top:14px">Already have an account? <a href="/login">Log in</a></p>
+      {% elif signup_enabled %}<p class="lede" style="margin-top:14px">New here? <a href="/signup">Create a view-only account</a></p>{% endif %}
       {% if secure %}
         <div class="tls-pill secure"><i class="ico ico-lock"></i>Secure connection (TLS)</div>
       {% else %}
@@ -1054,28 +1085,80 @@ LOGIN_TEMPLATE = """
 DASHBOARD_TEMPLATE = dashboard_pages.SHELL + dashboard_pages.OVERVIEW_BODY + dashboard_pages.OVERVIEW_JS
 
 
+def _auth_page(signup: bool, error: str | None = None, status: int = 200, username: str = ""):
+    return render_template_string(LOGIN_TEMPLATE, style=PAGE_STYLE, secure=request.is_secure, show_hint=not PUBLIC_MODE,
+                                  error=error, signup=signup, signup_enabled=viewer_store is not None,
+                                  username=username), status
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    show_hint = not PUBLIC_MODE
     if request.method == "POST":
         ip = _client_ip()
         if PUBLIC_MODE and _login_blocked(ip):
-            return render_template_string(LOGIN_TEMPLATE, style=PAGE_STYLE, secure=request.is_secure, show_hint=show_hint,
-                                           error="Too many failed attempts. Try again in 15 minutes."), 429
+            return _auth_page(False, "Too many failed attempts. Try again in 15 minutes.", 429)
         username = request.form.get("username", "")
         password = request.form.get("password", "")
+        role = None
         if (secrets.compare_digest(username.encode(), DEMO_USERNAME.encode())
                 and secrets.compare_digest(password.encode(), DEMO_PASSWORD.encode())):
+            role = "operator"
+        elif viewer_store is not None:
+            name, _ = accounts.validate_username(username)
+            try:
+                stored = viewer_store.get_hash(name) if name else None
+            except accounts.StoreError:
+                return _auth_page(False, "Accounts are temporarily unavailable. Try again in a minute.", 503)
+            if accounts.verify_password(password, stored) and name:
+                role, username = "viewer", name
+        if role:
             _login_failures.pop(ip, None)
-            session["logged_in"] = True
-            session["username"] = username
+            session.clear()
+            session.update(logged_in=True, username=username, role=role)
             return redirect(url_for("dashboard"))
         _login_failures.setdefault(ip, []).append(time.time())
-        return render_template_string(LOGIN_TEMPLATE, style=PAGE_STYLE,
-                                       secure=request.is_secure, show_hint=show_hint,
-                                       error="Invalid username or password."), 401
-    return render_template_string(LOGIN_TEMPLATE, style=PAGE_STYLE,
-                                   secure=request.is_secure, show_hint=show_hint, error=None)
+        return _auth_page(False, "Invalid username or password.", 401)
+    return _auth_page(False)
+
+
+@app.route("/signup", methods=["GET", "POST"])
+def signup():
+    """Create a view-only account: it can look at every page but cannot send commands."""
+    if viewer_store is None:
+        abort(404)
+    if request.method == "GET":
+        return _auth_page(True)
+    ip = _client_ip()
+    attempts = _signup_attempts[ip] = _recent(_signup_attempts.get(ip, []), SIGNUP_WINDOW_SEC)
+    created = _signup_created[ip] = _recent(_signup_created.get(ip, []), SIGNUP_WINDOW_SEC)
+    _signup_created_today[:] = _recent(_signup_created_today, 86400)
+    if (len(attempts) >= SIGNUP_ATTEMPTS_PER_IP or len(created) >= SIGNUP_CREATED_PER_IP
+            or len(_signup_created_today) >= SIGNUP_CREATED_PER_DAY):
+        return _auth_page(True, "Too many sign-ups from here for now. Try again later.", 429)
+    attempts.append(time.time())
+    if request.form.get("hp_field"):                                      # a hidden field only a bot fills in
+        return _auth_page(True, "Sign-up failed. Try again.", 400)
+    raw_name = request.form.get("username", "")
+    name, why = accounts.validate_username(raw_name)
+    if not name:
+        return _auth_page(True, why, 400, raw_name[:30])
+    password = request.form.get("password", "")
+    if password != request.form.get("confirm", ""):
+        return _auth_page(True, "The two passwords do not match.", 400, name)
+    why = accounts.validate_password(password, name)
+    if why or secrets.compare_digest(name.encode(), DEMO_USERNAME.encode()):
+        return _auth_page(True, why or "That username is reserved. Choose another.", 400, name)
+    try:
+        ok = viewer_store.create(name, accounts.hash_password(password))
+    except accounts.StoreError:
+        return _auth_page(True, "Accounts are temporarily unavailable. Try again in a minute.", 503, name)
+    if not ok:
+        return _auth_page(True, "That username is taken. Choose another.", 409, name)
+    created.append(time.time())
+    _signup_created_today.append(time.time())
+    session.clear()
+    session.update(logged_in=True, username=name, role="viewer")
+    return redirect(url_for("dashboard"))
 
 
 @app.route("/logout", methods=["POST"])
@@ -1087,6 +1170,9 @@ def logout():
 @app.route("/dashboard/send", methods=["POST"])
 @login_required
 def dashboard_send():
+    if not is_operator():
+        session["flash"] = ["warn", "This is a view-only account. Only the operator can send commands."]
+        return redirect(_back_to_page())
     action = request.form.get("action")
     if action == "idle":
         # Clear the utility-side list AND engage the gateway's operator
@@ -1241,6 +1327,8 @@ def _public(ev: dict) -> dict:
 def api_schedule_add():
     if not session.get("logged_in"):
         return jsonify({"error": "not logged in"}), 401
+    if not is_operator():
+        return jsonify({"ok": False, "error": "view-only account", "errors": [{"row": 0, "message": "This is a view-only account. Only the operator can add events."}]}), 403
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({"ok": False, "errors": [{"row": 0, "message": "Send a JSON body."}]}), 400
@@ -1258,6 +1346,8 @@ def api_schedule_add():
 def api_schedule_cancel():
     if not session.get("logged_in"):
         return jsonify({"error": "not logged in"}), 401
+    if not is_operator():
+        return jsonify({"ok": False, "error": "view-only account"}), 403
     data = request.get_json(silent=True) or {}
     removed = _cancel_events(None if data.get("all") is True else str(data.get("mrid", "")))
     print(f"[SIM] Operator '{session.get('username')}' cancelled {removed} event(s)")

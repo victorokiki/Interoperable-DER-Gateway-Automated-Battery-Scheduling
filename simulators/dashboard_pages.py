@@ -352,6 +352,10 @@ def _sample_forever(state_provider):
 
 COMMON_CSS = """
 <style>
+  .role-tag { border: 1px solid var(--amber); color: var(--amber); font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; padding: 3px 8px; margin-left: 8px; }
+  .viewer-note { display: none; border: 1px dashed var(--muted); padding: 12px 14px; font-size: 13px; color: var(--muted); }
+  body[data-role="viewer"] .viewer-note { display: block; }
+  body[data-role="viewer"] .ops-only { display: none !important; }
   .ico-grid { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='square'%3E%3Crect x='3' y='3' width='7' height='7'/%3E%3Crect x='14' y='3' width='7' height='7'/%3E%3Crect x='3' y='14' width='7' height='7'/%3E%3Crect x='14' y='14' width='7' height='7'/%3E%3C/svg%3E"); }
   .ico-alert { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='square' stroke-linejoin='miter'%3E%3Cpath d='M12 3L2 21h20L12 3z'/%3E%3Cpath d='M12 10v5M12 18h.01'/%3E%3C/svg%3E"); }
   .shell { display: flex; align-items: stretch; min-height: calc(100vh - 62px); }
@@ -431,14 +435,15 @@ document.addEventListener('DOMContentLoaded', function () {
   tickPT();
   document.querySelectorAll('.notice').forEach(function (el) { el.textContent = fmtT(el.textContent); });
 });
+const CAN_CONTROL = document.body.dataset.role !== 'viewer';
 function queueTable(events, acks) {
   if (!events.length) return '<p class="empty">Nothing queued. Plan events on the Schedule page, or use Run now.</p>';
-  return '<table><tr><th>Event ID</th><th>What</th><th>When</th><th>Status</th><th>Told</th><th></th></tr>' + events.map(function (e) {
+  return '<table><tr><th>Event ID</th><th>What</th><th>When</th><th>Status</th><th>Told</th>' + (CAN_CONTROL ? '<th></th>' : '') + '</tr>' + events.map(function (e) {
     const kind = e.power_kw >= 0 ? '<span class="tag charge">CHARGE</span>' : '<span class="tag discharge">DISCHARGE</span>';
     const ack = acks && acks[e.mrid] ? '<span class="ack-yes">Yes</span>' : '<span class="ack-no">Pending</span>';
     return '<tr><td class="id">' + esc(e.mrid) + '</td><td>' + kind + ' ' + Math.abs(e.power_kw).toFixed(0) + ' kW</td><td>' + esc(dateTime(e.start)) + '<br>to ' + esc(dateTime(e.end)) +
            '</td><td>' + (e.running ? '<b class="sev-ok">Running now</b>' : 'Waiting to start') + '</td><td title="Has the utility been told this event was received?">' + ack +
-           '</td><td><button class="btn grey" type="button" data-cancel="' + esc(e.mrid) + '">Cancel</button></td></tr>';
+           '</td>' + (CAN_CONTROL ? '<td><button class="btn grey" type="button" data-cancel="' + esc(e.mrid) + '">Cancel</button></td>' : '') + '</tr>';
   }).join('') + '</table>';
 }
 document.addEventListener('click', async function (ev) {
@@ -1053,7 +1058,8 @@ SCHEDULE_BODY = """
   </div>
   <div class="card">
     <h2><i class="ico ico-zap"></i>Add an event</h2>
-    <div class="formgrid">
+    <div class="viewer-note">You are signed in with a view-only account. You can browse the calendar and the queue; only the operator can add or cancel events.</div>
+    <div class="formgrid ops-only">
       <div><label for="f-dir">Direction</label>
         <select id="f-dir" class="full"><option value="1">Charge (power in)</option><option value="-1">Discharge (power out)</option></select></div>
       <div><label for="f-kw">Power (kW)</label><input id="f-kw" type="number" value="500" min="1" max="100000" step="1"></div>
@@ -1066,8 +1072,8 @@ SCHEDULE_BODY = """
           <select id="f-unit" class="full"><option value="60">minutes</option><option value="3600">hours</option></select></div></div>
       <div class="wide"><label class="chk"><input id="f-replace" type="checkbox"> Replace any event this one overlaps</label></div>
     </div>
-    <p id="f-preview" class="stat-hint" style="min-height:2.6em"></p>
-    <button class="btn" id="f-add" type="button"><i class="ico ico-calendar"></i>Add to schedule</button>
+    <p id="f-preview" class="stat-hint ops-only" style="min-height:2.6em"></p>
+    <button class="btn ops-only" id="f-add" type="button"><i class="ico ico-calendar"></i>Add to schedule</button>
   </div>
 </div>
 
@@ -1076,10 +1082,10 @@ SCHEDULE_BODY = """
 <div class="card">
   <h2><i class="ico ico-zap"></i>Queue: running and upcoming</h2>
   <div id="queue" class="tablewrap"><p class="empty">Loading…</p></div>
-  <div style="margin-top:12px"><button class="btn grey" type="button" id="cancel-all">Cancel everything in the queue</button></div>
+  <div class="ops-only" style="margin-top:12px"><button class="btn grey" type="button" id="cancel-all">Cancel everything in the queue</button></div>
 </div>
 
-<div class="card">
+<div class="card ops-only">
   <h2><i class="ico ico-file"></i>Add many events from a file</h2>
   <p class="stat-hint" style="font-size:13px;color:var(--muted)">Prepare a spreadsheet saved as CSV with one row per event, then choose it here. Each row is checked before anything is added, and you see the result first.</p>
   <p class="stat-hint" style="font-size:12px">Columns: <code class="inline">date</code> (YYYY-MM-DD), <code class="inline">start_time</code> (24-hour, HH:MM, Pacific), <code class="inline">duration_minutes</code>, <code class="inline">direction</code> (charge or discharge), <code class="inline">power_kw</code>.
@@ -1262,7 +1268,7 @@ $('f-date').value = today; $('f-date').min = today; preview(); loadAll(); setInt
 
 SHELL = """
 <!doctype html><html><head><title>{{ title }} — Grid Operator Portal</title><meta name="viewport" content="width=device-width, initial-scale=1">{{ style|safe }}""" + COMMON_CSS + EXTRA_CSS + SCHEDULE_CSS + """</head>
-<body>
+<body data-role="{{ role }}">
   <div class="topbar">
     <div class="brand">
       <img class="logo-light swap" src="{{ url_for('static', filename='invinity-logo.svg') }}" alt="Invinity Energy Systems">
@@ -1273,13 +1279,13 @@ SHELL = """
       <span class="pt-clock" id="pt-clock" title="Every time in this portal is Pacific Time (Vancouver)"></span>
       {% if secure %}<span class="tls-pill secure topbar-pill"><i class="ico ico-lock"></i>TLS</span>{% else %}<span class="tls-pill insecure topbar-pill"><i class="ico ico-unlock"></i>Unencrypted</span>{% endif %}
       <button type="button" class="btn grey theme-toggle" onclick="toggleTheme()" aria-label="Switch between light and dark mode" title="Switch light / dark"><i class="ico ico-moon"></i><i class="ico ico-sun"></i></button>
-      Signed in as <b>{{ username }}</b>
+      Signed in as <b>{{ username }}</b>{% if role == 'viewer' %}<span class="role-tag" title="You can look at everything; only the operator can send commands.">View only</span>{% endif %}
       <form method="post" action="/logout"><button class="btn grey" type="submit"><i class="ico ico-logout"></i>Log Out</button></form>
     </div>
   </div>
   <div id="idle-banner" class="idle-banner" role="status" hidden>
     <span><i class="ico ico-alert"></i><b>Force Idle is on.</b> The battery is held at 0 kW and utility events are being ignored.<span id="idle-who"></span></span>
-    <form method="post" action="/dashboard/send" onsubmit="this.next.value = location.pathname">
+    <form class="ops-only" method="post" action="/dashboard/send" onsubmit="this.next.value = location.pathname">
       <input type="hidden" name="action" value="release"><input type="hidden" name="next" value="">
       <button class="btn secondary" type="submit">Release Force Idle</button>
     </form>
@@ -1320,6 +1326,8 @@ OVERVIEW_BODY = """
 <div class="grid">
   <div class="card">
     <h2><i class="ico ico-zap"></i>Run now</h2>
+    <div class="viewer-note">You are signed in with a view-only account. You can look at everything on this dashboard; only the operator can send commands.</div>
+    <div class="ops-only">
     <form method="post" action="/dashboard/send" onsubmit="this.next.value = location.pathname">
       <input type="hidden" name="next" value="">
       <p class="stat-hint" style="margin:0 0 4px">Starts straight away. To start at a set time, or to line up several events, use <a href="/dashboard/schedule">Schedule</a>.</p>
@@ -1339,6 +1347,7 @@ OVERVIEW_BODY = """
     <form method="post" action="/dashboard/send" style="margin-top:10px">
       <button class="btn secondary" type="submit" name="action" value="release" style="width:100%">Release Force Idle</button>
     </form>
+    </div>
   </div>
   <div class="card">
     <h2><i class="ico ico-list"></i>Queue: running and upcoming</h2>
@@ -1519,7 +1528,7 @@ def register(app, *, page_style: str, login_required, state_provider) -> None:
     """Adds /dashboard (Overview), /dashboard/alerts, /api/overview and /api/alerts to the app."""
     def render(title, active, body, script):
         return render_template_string(SHELL, title=title, active=active, body=body, script=script, style=page_style,
-                                      username=session.get("username"), secure=request.is_secure, flash=session.pop("flash", None))
+                                      username=session.get("username"), role=session.get("role", "operator"), secure=request.is_secure, flash=session.pop("flash", None))
 
     @login_required
     def dashboard():
