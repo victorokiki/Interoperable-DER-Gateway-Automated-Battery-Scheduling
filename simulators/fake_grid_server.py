@@ -1107,7 +1107,8 @@ def login():
             name, _ = accounts.validate_username(username)
             try:
                 stored = viewer_store.get_hash(name) if name else None
-            except accounts.StoreError:
+            except accounts.StoreError as exc:
+                print(f"[accounts] login lookup failed: {exc}", flush=True)
                 return _auth_page(False, "Accounts are temporarily unavailable. Try again in a minute.", 503)
             if accounts.verify_password(password, stored) and name:
                 role, username = "viewer", name
@@ -1150,7 +1151,8 @@ def signup():
         return _auth_page(True, why or "That username is reserved. Choose another.", 400, name)
     try:
         ok = viewer_store.create(name, accounts.hash_password(password))
-    except accounts.StoreError:
+    except accounts.StoreError as exc:
+        print(f"[accounts] sign-up failed: {exc}", flush=True)
         return _auth_page(True, "Accounts are temporarily unavailable. Try again in a minute.", 503, name)
     if not ok:
         return _auth_page(True, "That username is taken. Choose another.", 409, name)
