@@ -1036,6 +1036,19 @@ LOGIN_TEMPLATE = """
   .login-card label:first-of-type { margin-top: 0; }
   .login-card .btn { width: 100%; margin-top: 24px; padding: 13px; }
   .login-panel .tls-pill { align-self: flex-start; margin: 18px 0 0; }
+  .pw-field { position: relative; }
+  .pw-field input { padding-right: 64px; }
+  .pw-toggle {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: none; border: 1px solid var(--line);
+    color: var(--muted); font: inherit; font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; padding: 4px 7px; cursor: pointer;
+  }
+  .pw-toggle:hover { color: var(--ink); border-color: var(--ink); }
+  .pw-help { margin: 8px 0 0; font-size: 11px; line-height: 1.7; color: var(--faint); }
+  .pw-help .count { font-weight: 700; color: var(--red-text); }
+  .pw-help .count.ok { color: var(--green); }
+  .pw-help ul { margin: 4px 0 0; padding-left: 16px; }
+  .pw-help li.met { color: var(--green); }
   @media (max-width: 760px) {
     .login-split { flex-direction: column; margin: 0; min-height: 100vh; border: none; }
     .login-art { padding: 24px; border-right: none; border-bottom: 1px solid var(--ink); }
@@ -1060,10 +1073,19 @@ LOGIN_TEMPLATE = """
         <label for="username">Username *</label>
         <input type="text" id="username" name="username" placeholder="{% if signup %}Choose a username (3 to 30 characters){% else %}Enter your Username{% endif %}" value="{{ username }}" required autofocus autocomplete="username">
         <label for="password">Password *</label>
-        <input type="password" id="password" name="password" placeholder="{% if signup %}At least 10 characters{% else %}Enter your Password{% endif %}" required autocomplete="{% if signup %}new-password{% else %}current-password{% endif %}">
+        <div class="pw-field"><input type="password" id="password" name="password" placeholder="{% if signup %}At least 10 characters{% else %}Enter your Password{% endif %}" required autocomplete="{% if signup %}new-password{% else %}current-password{% endif %}"{% if signup %} maxlength="128" aria-describedby="pw-help"{% endif %}><button type="button" class="pw-toggle" data-for="password" aria-label="Show password" aria-pressed="false">Show</button></div>
         {% if signup %}
+        <div class="pw-help" id="pw-help" aria-live="polite">
+          <span class="count" id="pw-count">0 characters (10 needed)</span>
+          <ul>
+            <li id="pw-r-len">At least 10 characters (up to 128). A few random words in a row work well.</li>
+            <li id="pw-r-mix">Not your username. (Very common passwords are also turned down.)</li>
+            <li id="pw-r-uniq">Not just the same few characters repeated.</li>
+          </ul>
+        </div>
         <label for="confirm">Confirm password *</label>
-        <input type="password" id="confirm" name="confirm" placeholder="Type it again" required autocomplete="new-password">
+        <div class="pw-field"><input type="password" id="confirm" name="confirm" placeholder="Type it again" required autocomplete="new-password" maxlength="128"><button type="button" class="pw-toggle" data-for="confirm" aria-label="Show password" aria-pressed="false">Show</button></div>
+        <div class="pw-help"><span id="pw-match"></span></div>
         <div style="position:absolute;left:-9999px" aria-hidden="true"><label for="hp_field">Leave this empty</label><input type="text" id="hp_field" name="hp_field" tabindex="-1" autocomplete="off" data-lpignore="true" data-form-type="other"></div>
         {% endif %}
         <button class="btn" type="submit">{% if signup %}Create account{% else %}Login{% endif %}</button>
@@ -1078,6 +1100,40 @@ LOGIN_TEMPLATE = """
       {% if show_hint %}<div class="hint">Demo account — operator / invinity2026</div>{% endif %}
     </div>
   </div>
+<script>
+(function () {
+  document.querySelectorAll('.pw-toggle').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var input = document.getElementById(b.getAttribute('data-for'));
+      var show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      b.textContent = show ? 'Hide' : 'Show';
+      b.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+      b.setAttribute('aria-pressed', show ? 'true' : 'false');
+    });
+  });
+  var pw = document.getElementById('password'), cf = document.getElementById('confirm');
+  var count = document.getElementById('pw-count');
+  if (!count) return;
+  var match = document.getElementById('pw-match'), MIN = 10;
+  function update() {
+    var n = pw.value.length;
+    var left = MIN - n;
+    count.textContent = n + (n === 1 ? ' character' : ' characters') + (left > 0 ? ' (' + left + ' more needed)' : ' (long enough)');
+    count.className = 'count' + (left <= 0 ? ' ok' : '');
+    document.getElementById('pw-r-len').className = left <= 0 ? 'met' : '';
+    var user = (document.getElementById('username').value || '').toLowerCase();
+    document.getElementById('pw-r-mix').className = n && pw.value.toLowerCase() !== user ? 'met' : '';
+    document.getElementById('pw-r-uniq').className = new Set(pw.value.split('')).size >= 5 ? 'met' : '';
+    if (!cf.value) { match.textContent = ''; match.className = ''; }
+    else if (cf.value === pw.value) { match.textContent = 'Passwords match'; match.className = 'count ok'; }
+    else { match.textContent = 'Passwords do not match yet (' + cf.value.length + ' typed)'; match.className = 'count'; }
+  }
+  pw.addEventListener('input', update); cf.addEventListener('input', update);
+  document.getElementById('username').addEventListener('input', update);
+  update();
+})();
+</script>
 </body></html>
 """
 
