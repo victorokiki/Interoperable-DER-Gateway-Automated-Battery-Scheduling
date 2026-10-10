@@ -1,0 +1,19 @@
+# Render Blueprint: Render reads this file and creates the web service for you.
+# Dashboard > New > Blueprint > pick this repository. Render asks for DASHBOARD_PASSWORD;
+# the secret key is generated for you. See "Put it online" in the README.
+services:
+  - type: web
+    name: invinity-der-dashboard
+    runtime: docker
+    plan: free              # change to "starter" to stop it sleeping when nobody is visiting
+    region: oregon          # the closest Render region to Vancouver
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /login
+    autoDeploy: true
+    envVars:
+      - key: PUBLIC_MODE
+        value: "1"
+      - key: DASHBOARD_PASSWORD
+        sync: false         # you type this in Render; at least 12 characters, never the demo password
+      - key: DASHBOARD_SECRET_KEY
+        generateValue: true
