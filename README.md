@@ -34,3 +34,17 @@ The dashboard is in `simulators/dashboard_pages.py` and `simulators/fake_grid_se
 ```powershell
 .venv\Scripts\python.exe -m pytest -q
 ```
+
+## Put it online
+
+`Dockerfile` and `deploy/start.py` run the battery simulator, the operator dashboard and the gateway together on one server. Only the dashboard's port is exposed.
+
+Set these environment variables on the host (for example a Render web service built from this repository's `Dockerfile`):
+
+| Variable | Value |
+|---|---|
+| `DASHBOARD_PASSWORD` | a new password, at least 12 characters (the demo password is published here, so the server refuses to start with it) |
+| `DASHBOARD_SECRET_KEY` | any long random string |
+| `DASHBOARD_USERNAME` | optional, default `operator` |
+
+In this public mode the IEEE 2030.5 and `/simulate/*` endpoints answer only to the gateway on the same server, the login is rate-limited, and the demo hint is hidden. Point your own domain at the service with a CNAME record. Data lives in the container's temporary disk, so it resets when the service restarts.

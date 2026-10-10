@@ -82,7 +82,7 @@ Every event asks for responses as CSIP's example DERControl does
 specific ones such as started and completed).
 """
 
-from flask import Flask, request, jsonify, session, redirect, url_for, render_template_string
+from flask import Flask, request, jsonify, session, redirect, url_for, render_template_string, abort
 from functools import wraps
 
 from capstone.ieee_client import DER_RATING_SETTINGS, DEV_CERTIFICATE, PERCENT_SCALE, der_ratings, fixed_w_reference
@@ -124,6 +124,71 @@ DEVICE_STALE_SEC = 25
 # make /dashboard behave like a real gated login for demo purposes.
 DEMO_USERNAME = os.environ.get("DASHBOARD_USERNAME", "operator")
 DEMO_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "invinity2026")
+DEFAULT_DEMO_PASSWORD = "invinity2026"
+
+# PUBLIC_MODE=1 is for a copy that is reachable from the internet. Only the dashboard, its
+# APIs and its static files answer to the world; the machine-to-machine endpoints (the IEEE
+# 2030.5 server, /simulate/*, /status) answer only to the gateway on the same server, and
+# the server refuses to start with the published demo password.
+PUBLIC_MODE = os.environ.get("PUBLIC_MODE", "0") == "1"
+DASHBOARD_HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1")
+DASHBOARD_PORT = int(os.environ.get("DASHBOARD_PORT", "5001"))
+MIN_PUBLIC_PASSWORD_LEN = 12
+LOGIN_MAX_FAILURES, LOGIN_WINDOW_SEC = 5, 900
+_PUBLIC_PREFIXES = ("/login", "/logout", "/dashboard", "/api/", "/reports/", "/static/")
+_LOOPBACK = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
+_login_failures: dict = {}
+
+
+def check_public_config() -> None:
+    """Refuse to run a public copy that anyone could log in to."""
+    if not PUBLIC_MODE:
+        return
+    if DEMO_PASSWORD == DEFAULT_DEMO_PASSWORD or len(DEMO_PASSWORD) < MIN_PUBLIC_PASSWORD_LEN:
+        raise SystemExit("PUBLIC_MODE needs DASHBOARD_PASSWORD set to a new password of at least "
+                         f"{MIN_PUBLIC_PASSWORD_LEN} characters (the demo password is published in the repository).")
+    if "DASHBOARD_SECRET_KEY" not in os.environ:
+        raise SystemExit("PUBLIC_MODE needs DASHBOARD_SECRET_KEY set, so sessions survive a restart.")
+
+
+def _client_ip() -> str:
+    """The caller's address. Behind the host's proxy the last X-Forwarded-For entry is the one
+    the proxy itself added, so it cannot be forged by the caller."""
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if PUBLIC_MODE and forwarded:
+        return forwarded.split(",")[-1].strip()
+    return request.remote_addr or "unknown"
+
+
+def _login_blocked(ip: str) -> bool:
+    now = time.time()
+    recent = [t for t in _login_failures.get(ip, []) if now - t < LOGIN_WINDOW_SEC]
+    _login_failures[ip] = recent
+    return len(recent) >= LOGIN_MAX_FAILURES
+
+
+@app.before_request
+def _public_mode_guard():
+    if not PUBLIC_MODE:
+        return None
+    path = request.path
+    if path == "/" or path.startswith(_PUBLIC_PREFIXES) or request.remote_addr in _LOOPBACK:
+        return None
+    abort(404)          # a machine endpoint, asked by someone other than the gateway
+
+
+@app.after_request
+def _security_headers(response):
+    if PUBLIC_MODE:
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        response.headers.setdefault("Referrer-Policy", "same-origin")
+    return response
+
+
+@app.route("/")
+def home():
+    return redirect(url_for("dashboard"))
 
 # Active event store. Saved to schedule_store/utility_queue.json when this runs as a script (the
 # way a real utility server keeps its schedule), so restarting the simulator does not lose the queue.
@@ -969,7 +1034,7 @@ LOGIN_TEMPLATE = """
       {% else %}
         <div class="tls-pill insecure"><i class="ico ico-unlock"></i>Unencrypted connection — for local demo use only</div>
       {% endif %}
-      <div class="hint">Demo account — operator / invinity2026</div>
+      {% if show_hint %}<div class="hint">Demo account — operator / invinity2026</div>{% endif %}
     </div>
   </div>
 </body></html>
@@ -981,18 +1046,26 @@ DASHBOARD_TEMPLATE = dashboard_pages.SHELL + dashboard_pages.OVERVIEW_BODY + das
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    show_hint = not PUBLIC_MODE
     if request.method == "POST":
+        ip = _client_ip()
+        if PUBLIC_MODE and _login_blocked(ip):
+            return render_template_string(LOGIN_TEMPLATE, style=PAGE_STYLE, secure=request.is_secure, show_hint=show_hint,
+                                           error="Too many failed attempts. Try again in 15 minutes."), 429
         username = request.form.get("username", "")
         password = request.form.get("password", "")
-        if username == DEMO_USERNAME and password == DEMO_PASSWORD:
+        if (secrets.compare_digest(username.encode(), DEMO_USERNAME.encode())
+                and secrets.compare_digest(password.encode(), DEMO_PASSWORD.encode())):
+            _login_failures.pop(ip, None)
             session["logged_in"] = True
             session["username"] = username
             return redirect(url_for("dashboard"))
+        _login_failures.setdefault(ip, []).append(time.time())
         return render_template_string(LOGIN_TEMPLATE, style=PAGE_STYLE,
-                                       secure=request.is_secure,
+                                       secure=request.is_secure, show_hint=show_hint,
                                        error="Invalid username or password."), 401
     return render_template_string(LOGIN_TEMPLATE, style=PAGE_STYLE,
-                                   secure=request.is_secure, error=None)
+                                   secure=request.is_secure, show_hint=show_hint, error=None)
 
 
 @app.route("/logout", methods=["POST"])
@@ -1325,6 +1398,7 @@ def _build_dashboard_tls_context() -> ssl.SSLContext | None:
 
 
 if __name__ == "__main__":
+    check_public_config()
     _persist_queue = True
     _load_queue()
     dashboard_pages.start_history(_dashboard_state)
@@ -1338,7 +1412,7 @@ if __name__ == "__main__":
     scheme = "https" if ssl_context else "http"
 
     # Never let the session cookie travel unencrypted once TLS is on.
-    app.config["SESSION_COOKIE_SECURE"] = bool(ssl_context)
+    app.config["SESSION_COOKIE_SECURE"] = bool(ssl_context) or PUBLIC_MODE
 
     print(f"Fake IEEE 2030.5 Grid Server running at {scheme}://localhost:5001")
     print(f"Active-power control sent: {_power_control()} (SIM_POWER_CONTROL)")
@@ -1362,4 +1436,4 @@ if __name__ == "__main__":
     print('       -H "Content-Type: application/json" \\')
     print('       -d \'{"power_kw": 500, "duration_sec": 3600}\'')
     print()
-    app.run(port=5001, debug=False, ssl_context=ssl_context)
+    app.run(host=DASHBOARD_HOST, port=DASHBOARD_PORT, debug=False, ssl_context=ssl_context)

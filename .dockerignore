@@ -1,0 +1,14 @@
+.git
+.venv
+.pytest_cache
+.claude
+.demo
+.vscode
+runtime
+schedule_store
+certs
+tests
+**/__pycache__
+**/*.pyc
+*.egg-info
+*.docx

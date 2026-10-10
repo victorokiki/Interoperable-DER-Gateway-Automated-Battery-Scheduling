@@ -264,8 +264,10 @@ if __name__ == "__main__":
     t.start()
 
     type_label = "AC-configured" if bms_type == BMS_TYPE_AC else "DC-configured"
-    print(f"Fake Endurium BMS ({type_label}) listening on port 5020...")
+    BIND_HOST = os.environ.get("BATTERY_HOST", "0.0.0.0")
+    BIND_PORT = int(os.environ.get("BATTERY_PORT", "5020"))
+    print(f"Fake Endurium BMS ({type_label}) listening on port {BIND_PORT}...")
     print("Set BMS_TYPE=dc to simulate a DC-configured unit instead.")
     print("Press Ctrl+C to stop.\n")
 
-    StartTcpServer(context=context, identity=identity, address=("0.0.0.0", 5020))
+    StartTcpServer(context=context, identity=identity, address=(BIND_HOST, BIND_PORT))
