@@ -95,6 +95,10 @@ class SupabaseStore:
                 return 409, None
             raise StoreError(f"the account database answered HTTP {e.code}") from None
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+            if not re.fullmatch(r"[A-Za-z0-9_.\-]+", self.key):
+                # Typically a copy of the masked key (dots) or a stray space or line break from pasting.
+                raise StoreError("SUPABASE_SECRET_KEY contains characters a key never has "
+                                 f"(length {len(self.key)}); copy it again from Supabase with its Copy button") from None
             raise StoreError(f"the account database could not be reached ({type(e).__name__})") from None
 
     def create(self, username: str, password_hash: str) -> bool:
