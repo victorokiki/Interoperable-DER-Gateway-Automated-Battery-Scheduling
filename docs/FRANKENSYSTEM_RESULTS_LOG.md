@@ -28,3 +28,15 @@ Oddities, recorded honestly:
   The BMS raised **no alert** during the gap, so its comms-lost timeout is **longer than about 10 s** (useful for test 9).
 - **Register peak 48 a second at 11:49:33**: the catch-up burst right after that stall (steady state is about 10 a second; the earlier peak was 39). Under 50, but closer than we want. Test 10 should note it.
 - **11:53:04 WARNING** `Could not publish status snapshot ... live_status.tmp Access is denied` (the known Windows file-replace race with the dashboard reading the file; one occurrence, retried on the next cycle, no effect on the battery).
+
+## Test 5: Low-power charge: PASS (12:02:43 to 12:03:38)
+Event F0FF2C67, charge 3 kW, 60 s window. Written -3 kW to 41009 (hardware negative = charge, confirmed by the engineer), read back exact, BMS On / Normal.
+BMS-measured power 3 kW from the first sample after the write, steady to the end; 0 kW written and measured at 12:03:38, the instant the window ended. No alerts.
+Power began 5 s after the window start (the gateway polls the utility every 5 s); charge level unchanged at 56.9 % (about 0.05 kWh is below its resolution).
+Evidence: recordings\bms_20261016_184735.csv (measured_kw), audit log (modbus_write rows). Engineer confirmation of 3 kW into the battery: to be noted.
+
+## Test 6: Low-power discharge: PASS (12:05:18 to 12:06:14), one observation
+Event 64A3D119, discharge 3 kW. Written +3 kW to 41009, read back exact, BMS On / Normal; BMS-measured power negative (discharging), as expected for the sign.
+**Observation: the BMS measured -2 kW for the whole discharge against a +3 kW setpoint** (the charge measured exactly 3). Cause unknown from our side (losses / auxiliary load / rounding / delivered less than asked); engineer to say what their screen showed.
+Return to 0: 0 kW written at 12:06:14; measured 0 by 12:06:17. Charge level 56.9 to 56.6 % during the minute (the BMS's estimate looks coarse; not interpreted).
+Evidence: the same recording and audit log.
