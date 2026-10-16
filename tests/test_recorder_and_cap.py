@@ -165,3 +165,14 @@ def test_the_recorder_keeps_every_row_in_the_file_as_it_goes(tmp_path):
         await asyncio.gather(task, return_exceptions=True)
         return rows_while_running
     assert len(run(go())) >= 3
+
+
+def test_the_recorder_reports_the_register_rate_for_the_load_check(tmp_path):
+    """Test 10: the gateway, recorder included, must stay under the BMS's 50 registers a second."""
+    async def go():
+        driver, state = await make_driver(FakeBMS(bms_type=1))
+        await driver.set_power(3.0, source="test")
+        return await record_for(driver, state, tmp_path, 2.5, interval=1.0)   # 1 s is the smallest RECORD_INTERVAL_SEC
+    rows = read_rows(run(go()).path)
+    assert int(rows[-1]["registers_total"]) > int(rows[0]["registers_total"]) > 0
+    assert 0 < int(rows[-1]["registers_peak_per_s"]) <= 50

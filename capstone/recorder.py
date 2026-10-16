@@ -26,7 +26,9 @@ COLUMNS = [
     "measured_kw", "measured_kvar",                     # + = charging, - = discharging (the app's sign)
     "confirmed_setpoint_kw", "requested_kw", "setpoint_source",
     "limit_charge_kw", "limit_discharge_kw",
-    "alerts_hex", "heartbeat_stale", "note",
+    "alerts_hex", "heartbeat_stale",
+    "registers_total", "registers_peak_per_s",           # what this gateway asked the BMS for (limit: 50 a second)
+    "note",
 ]
 
 
@@ -54,6 +56,8 @@ class Recorder:
         row.update(utc=now.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z", epoch_s=f"{now.timestamp():.3f}",
                    vancouver=_vancouver(now))
         d = self.driver
+        row["registers_total"] = d.register_meter.total
+        row["registers_peak_per_s"] = d.register_meter.peak_rate
         if not d._client.connected:
             row["note"] = "not connected to the BMS"
             return row
