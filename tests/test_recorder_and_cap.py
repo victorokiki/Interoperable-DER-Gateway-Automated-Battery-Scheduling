@@ -191,3 +191,16 @@ def test_vancouver_time_is_worked_out_without_a_timezone_database():
     assert off(datetime.datetime(2026, 11, 1, 9, 0, tzinfo=utc)) == -8        # 02:00 PDT on 1 Nov 2026
     from capstone.recorder import _vancouver
     assert _vancouver(datetime.datetime(2026, 10, 16, 18, 34, 9, tzinfo=utc)).startswith("2026-10-16 11:34:09")
+
+
+def test_the_recording_shows_the_bms_heartbeat_and_our_echo_of_it(tmp_path):
+    """Test 3: the echo (41002) must follow the BMS's own counter (31003)."""
+    async def go():
+        fake = FakeBMS(bms_type=1)
+        driver, state = await make_driver(fake)
+        await driver.heartbeat_once()                       # reads 31003, writes it to 41002
+        rec = Recorder(driver, state, tmp_path, 1)
+        return await rec.sample(), fake
+    row, fake = run(go())
+    assert row["bms_heartbeat_31003"] != "" and row["operator_heartbeat_41002"] != ""
+    assert abs(int(row["bms_heartbeat_31003"]) - int(row["operator_heartbeat_41002"])) <= 1

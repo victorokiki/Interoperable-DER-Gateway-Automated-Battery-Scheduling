@@ -27,6 +27,7 @@ COLUMNS = [
     "confirmed_setpoint_kw", "requested_kw", "setpoint_source",
     "limit_charge_kw", "limit_discharge_kw",
     "alerts_hex", "heartbeat_stale",
+    "bms_heartbeat_31003", "operator_heartbeat_41002",   # the BMS's own counter and our echo of it (spec 4.5.1)
     "registers_total", "registers_peak_per_s",           # what this gateway asked the BMS for (limit: 50 a second)
     "note",
 ]
@@ -85,6 +86,14 @@ class Recorder:
         if not status:
             row["note"] = row["note"] or "the BMS did not answer"
             return row
+        for column, kind, address in (("bms_heartbeat_31003", "input", 1003), ("operator_heartbeat_41002", "holding", 1002)):
+            try:
+                read = d._client.read_input_registers if kind == "input" else d._client.read_holding_registers
+                result = await read(address, count=1, slave=d._unit)
+                if not result.isError():
+                    row[column] = result.registers[0]
+            except Exception:
+                pass
         limits = d.limits_kw or (None, None)
         row.update(
             bms_state=status["operating_state"], bms_health=status["operating_status"],
