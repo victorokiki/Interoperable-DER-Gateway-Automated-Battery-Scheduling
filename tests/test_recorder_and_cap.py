@@ -176,3 +176,18 @@ def test_the_recorder_reports_the_register_rate_for_the_load_check(tmp_path):
     rows = read_rows(run(go()).path)
     assert int(rows[-1]["registers_total"]) > int(rows[0]["registers_total"]) > 0
     assert 0 < int(rows[-1]["registers_peak_per_s"]) <= 50
+
+
+def test_vancouver_time_is_worked_out_without_a_timezone_database():
+    """Windows has no tz database for zoneinfo: the column used to be blank. 2026 DST: 8 Mar to 1 Nov."""
+    import datetime
+    from capstone.recorder import _pacific_offset_hours as off
+    utc = datetime.timezone.utc
+    assert off(datetime.datetime(2026, 10, 16, 18, 34, tzinfo=utc)) == -7      # the test day: PDT
+    assert off(datetime.datetime(2026, 1, 15, 12, 0, tzinfo=utc)) == -8        # winter: PST
+    assert off(datetime.datetime(2026, 3, 8, 9, 59, tzinfo=utc)) == -8        # just before DST starts
+    assert off(datetime.datetime(2026, 3, 8, 10, 0, tzinfo=utc)) == -7        # 02:00 PST on 8 Mar 2026
+    assert off(datetime.datetime(2026, 11, 1, 8, 59, tzinfo=utc)) == -7       # just before DST ends
+    assert off(datetime.datetime(2026, 11, 1, 9, 0, tzinfo=utc)) == -8        # 02:00 PDT on 1 Nov 2026
+    from capstone.recorder import _vancouver
+    assert _vancouver(datetime.datetime(2026, 10, 16, 18, 34, 9, tzinfo=utc)).startswith("2026-10-16 11:34:09")

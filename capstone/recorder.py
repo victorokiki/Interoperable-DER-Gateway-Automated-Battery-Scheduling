@@ -32,13 +32,29 @@ COLUMNS = [
 ]
 
 
+def _pacific_offset_hours(moment: datetime.datetime) -> int:
+    """-7 in Pacific Daylight Time, else -8: DST runs from 02:00 on the second Sunday of March to 02:00 on the
+    first Sunday of November (the rule in force for Canada and the US), worked out here because Windows ships
+    no time-zone database for zoneinfo."""
+    def nth_sunday(year, month, n):
+        first = datetime.date(year, month, 1)
+        return first + datetime.timedelta(days=(6 - first.weekday()) % 7 + 7 * (n - 1))
+    year = moment.year
+    start = datetime.datetime.combine(nth_sunday(year, 3, 2), datetime.time(2), tzinfo=datetime.timezone.utc) \
+        + datetime.timedelta(hours=8)          # 02:00 PST is 10:00 UTC
+    end = datetime.datetime.combine(nth_sunday(year, 11, 1), datetime.time(2), tzinfo=datetime.timezone.utc) \
+        + datetime.timedelta(hours=7)          # 02:00 PDT is 09:00 UTC
+    return -7 if start <= moment < end else -8
+
+
 def _vancouver(moment: datetime.datetime) -> str:
-    """Pacific time, or blank where this machine has no time-zone database."""
+    """Pacific time as text: from the time-zone database where there is one, else from the DST rule above."""
     try:
         from zoneinfo import ZoneInfo
         return moment.astimezone(ZoneInfo("America/Vancouver")).strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
-        return ""
+        local = moment.astimezone(datetime.timezone(datetime.timedelta(hours=_pacific_offset_hours(moment))))
+        return local.strftime("%Y-%m-%d %H:%M:%S")
 
 
 class Recorder:
