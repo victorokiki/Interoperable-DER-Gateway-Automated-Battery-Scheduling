@@ -81,3 +81,8 @@ Evidence: audit rows 19:33 to 19:40 UTC; recordings\bms_20261016_184735.csv.
 Load: 32 418 registers requested in 3 193 s (53 min) = **10.2 a second on average; peak 48 in any 1 s window (limit 50)**. The peak was the catch-up burst after the 10 s stall at 11:49:33; otherwise at most 39.
 Audit: 271 rows; all 8 events have a received / active / completed-or-cancelled trail; all 8 non-zero setpoints are audited and confirmed.
 **Gap found:** 3 of the 5 BMS state changes in the recording (Shutting Down 12:33:30, Standby 12:33:50, On 12:38:37) had **no audit row**, because only code paths that happened to read 31000 (a command, a write's verification) reported a state change; the status poll did not. Fixed in the gateway (the poll now audits every state and health change); 3 new tests (they fail without the fix). The gateway under test ran the old code, so this gap is real in the test evidence: the recording has the exact times.
+
+## Test 12: Scheduled start at 12:55: PASS (12:55:00 to 12:56:00)
+Event 2779007F added at 12:50:36 on the Schedule page ("at a set time", Pacific): charge 3 kW, 12:55:00 to 12:56:00. The gateway held it as scheduled for 4 min 24 s.
+**Start: 0 s after the scheduled time** (audit second resolution): active, +3 kW written and confirmed at 19:55:00 UTC; EventStarted reply 19:55:01. BMS-measured power 0 at 12:55:01 and 2 kW at 12:55:03 (the BMS took 1 to 3 s to follow). **End: 0 s after the scheduled end**: window ended, 0 kW written and confirmed at 19:56:00, measured 0 at 12:56:01; EventCompleted reply 19:56:01. No alerts; On / Normal throughout.
+Evidence: audit rows 19:50 to 19:56 UTC; recordings\bms_20261016_184735.csv.
