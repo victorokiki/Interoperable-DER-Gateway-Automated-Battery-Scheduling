@@ -24,7 +24,10 @@ if ($env:MODBUS_HOST -like "CHANGE_ME*") {
 }
 
 if ($What -eq "check") {
-    python -m capstone.bms_probe --host $env:MODBUS_HOST --port $env:MODBUS_PORT --unit $env:MODBUS_UNIT_ID
+    # Prefer the BMS's read-only monitoring port (MONITOR_PORT, 5030 in SPC100644 Rev 05): the BMS itself refuses
+    # writes there and several clients may connect. The control port (MODBUS_PORT) takes ONE client at a time.
+    $port = if ($env:MONITOR_PORT) { $env:MONITOR_PORT } else { $env:MODBUS_PORT }
+    python -m capstone.bms_probe --host $env:MODBUS_HOST --port $port --unit $env:MODBUS_UNIT_ID
     exit $LASTEXITCODE
 }
 

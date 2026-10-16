@@ -142,3 +142,16 @@ def test_system_level_scope_zero_is_not_reported_as_invalid_dispatch_modes():
 
     fake.hr[1020] = 0                                    # Fixed Active Power not set: that one is Invalid
     assert "would set these" in by_name(probe(fake), "Dispatch modes").meaning
+
+
+def test_a_set_alert_bit_names_both_readings_of_the_specs_row_numbers():
+    """Rev 05 numbers the 31039 rows 1 to 32 but counts other bitfields from 0, so say both."""
+    fake = FakeBMS()
+    fake.ir[1040] = 1 << 5                                   # 31039-31040 as one uint32: bit 5 set
+    alerts = by_name(probe(fake), "Alerts")
+    assert alerts.status == WARN
+    assert "Array Comms Lost" in alerts.value and "No Active Controller" in alerts.value
+
+
+def test_no_alert_bits_is_a_pass():
+    assert by_name(probe(FakeBMS()), "Alerts").status == PASS

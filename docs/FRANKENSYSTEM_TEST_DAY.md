@@ -5,7 +5,7 @@ Print this. Tick each box before moving on. **If anything looks wrong, stop and 
 ## Before the day: ask Invinity, in writing
 
 - [ ] **BMS IP address** (the test network only): ______________________
-- [ ] **Modbus port** (usually 502): ________   **Unit ID** (we default to 255): ________
+- [ ] **Control port** (Rev 05 default 5020, one client only): ________   **Read-only monitoring port** (Rev 05 default 5030): ________   **Unit ID** (we default to 255): ________
 - [ ] How do I get on their network (cable or Wi-Fi), and do I need a fixed IP? ______________________
 - [ ] Is the spec for their firmware **SPC100644 Rev 03**? If not, can I have theirs?
 - [ ] **Who is beside me** and **where is the stop button / how do we stop the battery?** ______________________
@@ -28,6 +28,7 @@ Print this. Tick each box before moving on. **If anything looks wrong, stop and 
 - [ ] `ping <BMS address>` gets a reply. If not, ask them. Don't guess other addresses.
 
 ### 2. Read-only check (nothing is written)
+The check uses the BMS's **read-only monitoring port** (`MONITOR_PORT`, 5030 in the Rev 05 spec): the BMS itself refuses writes there, and it does not use up the control port, which takes only **one** client at a time. Ask Invinity to confirm 5030 is open on their system.
 ```powershell
 .\deploy\run_frankensystem.ps1 check
 ```

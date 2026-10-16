@@ -27,7 +27,11 @@ PASS, WARN, FAIL, INFO = "PASS", "WARN", "FAIL", "INFO"
 PAUSE_SEC = 0.15          # between requests: far below the BMS limit of 50 registers a second (5.2)
 HEARTBEAT_WAIT_SEC = 2.2  # 31003 increments once a second
 
-ALERT_NAMES = {6: "No Active Controller"}   # the one 31039 bit the ICD names that the gateway uses
+# SPC100644 Rev 05, 31039 BMS Alerts. The table numbers its rows 1 to 32 ("7 to 32 Unused" in a 32-bit
+# register), while the Control Status table beside it counts bits from 0, so the numbering is ambiguous:
+# a set bit with index n (counting from 0) is row n or row n + 1. Both readings are printed.
+ALERT_ROWS = {1: "No Array Detected", 2: "No Array Operational", 3: "System Self-Disconnect Fault",
+              4: "System Connection Lost", 5: "Array Comms Lost", 6: "No Active Controller"}
 
 
 class Check:
@@ -175,10 +179,16 @@ async def run_checks(client, unit_id=d.DEFAULT_UNIT_ID, heartbeat_wait=HEARTBEAT
         if not bits:
             checks.append(Check("Alerts (31039)", PASS, "none", "No alert bits are set."))
         else:
-            names = ", ".join(f"bit {b}" + (f" ({ALERT_NAMES[b]})" if b in ALERT_NAMES else "") for b in bits)
-            checks.append(Check("Alerts (31039)", WARN, names,
-                                "Alert bits are set. Ask Invinity what they mean before commanding. "
-                                "'No Active Controller' is normal while only watching."))
+            def reading(b):
+                if b in ALERT_ROWS and b + 1 in ALERT_ROWS:
+                    return (f"bit {b}: '{ALERT_ROWS[b]}' if the spec's row numbers are the bit index, "
+                            f"'{ALERT_ROWS[b + 1]}' if they start at 1")
+                if b in ALERT_ROWS or b + 1 in ALERT_ROWS:
+                    return f"bit {b}: '{ALERT_ROWS.get(b) or ALERT_ROWS[b + 1]}' (spec row {b if b in ALERT_ROWS else b + 1})"
+                return f"bit {b}: not in the spec's table"
+            checks.append(Check("Alerts (31039)", WARN, "; ".join(reading(b) for b in bits),
+                                "Alert bits are set. Ask Invinity which numbering their BMS uses and what is active. "
+                                "'No Active Controller' is expected while nothing is sending the heartbeat."))
 
     # Holding registers: what is currently commanded. Read only.
     regs, why = await _read(client, "holding", d.REG_OPERATING_COMMAND, 1, unit)
@@ -249,14 +259,17 @@ async def probe(host, port, unit, timeout):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Read-only check of an Endurium BMS (nothing is ever written).")
     ap.add_argument("--host", required=True, help="the BMS IP address Invinity gave you")
-    ap.add_argument("--port", type=int, default=502, help="Modbus TCP port (default 502)")
+    ap.add_argument("--port", type=int, default=502,
+                    help="Modbus TCP port. Rev 05 says 5030 is the read-only monitoring port (up to 5 clients, "
+                         "writes impossible) and 5020 the single-client control port; prefer 5030 for a first look")
     ap.add_argument("--unit", type=int, default=d.DEFAULT_UNIT_ID,
                     help="Modbus unit ID (default 255; 1 and 0 are tried too)")
     ap.add_argument("--timeout", type=float, default=5.0, help="seconds to wait for a connection (default 5)")
     ap.add_argument("--no-save", action="store_true", help="do not save the report under probe_reports/")
     args = ap.parse_args(argv)
 
-    print(f"Connecting to {args.host}:{args.port} (read-only)...")
+    note = " - the BMS read-only monitoring port (SPC100644 Rev 05, section 3)" if args.port == 5030 else ""
+    print(f"Connecting to {args.host}:{args.port} (read-only){note}...")
     checks = asyncio.run(probe(args.host, args.port, args.unit, args.timeout))
     if checks is None:
         print(f"\n[FAIL] Could not connect to {args.host}:{args.port}.\n"
