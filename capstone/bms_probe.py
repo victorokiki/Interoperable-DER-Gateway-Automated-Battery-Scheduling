@@ -206,7 +206,7 @@ async def run_checks(client, unit_id=d.DEFAULT_UNIT_ID, heartbeat_wait=HEARTBEAT
             text = (f"scope {d.SCOPE_NAMES.get(scope, scope)}, grid {d.GRID_MODE_NAMES.get(grid, grid)}, "
                     f"active {d.ACTIVE_MODE_NAMES.get(active, active)}, "
                     f"reactive {d.REACTIVE_MODE_NAMES.get(reactive, reactive)}")
-            invalid = 0 in (scope, grid, active, reactive)
+            invalid = 0 in (grid, active, reactive)      # 0 is a real scope (System-Level) but Invalid for the others
             checks.append(Check("Dispatch modes (41018-41021)", INFO, text,
                                 "Zero (Invalid) means the gateway would set these when it takes over."
                                 if invalid else "Already set by someone; the gateway leaves valid settings alone."))

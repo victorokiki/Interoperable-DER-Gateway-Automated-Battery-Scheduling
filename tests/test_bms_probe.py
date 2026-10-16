@@ -131,3 +131,14 @@ def test_without_read_only_the_driver_still_writes():
         await make_driver(fake)
         return fake
     assert asyncio.run(run()).commands()          # sent On to a Standby BMS
+
+
+def test_system_level_scope_zero_is_not_reported_as_invalid_dispatch_modes():
+    """Found on real hardware: scope 0 is System-Level, a valid value, not Invalid."""
+    fake = FakeBMS(bms_type=1)
+    fake.hr.update({1018: 0, 1019: 1, 1020: 1, 1021: 1})
+    modes = by_name(probe(fake), "Dispatch modes")
+    assert "System-Level" in modes.value and "leaves valid settings alone" in modes.meaning
+
+    fake.hr[1020] = 0                                    # Fixed Active Power not set: that one is Invalid
+    assert "would set these" in by_name(probe(fake), "Dispatch modes").meaning
