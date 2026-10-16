@@ -48,7 +48,7 @@ Force Idle: 0 kW written and confirmed within 1 s of the click; measured 0 kW; t
 Release: control resumed (authority back to the schedule; the next event ran 3 kW and ended on time with 0 kW written and measured).
 5 writes (3, -3, 0, 3, 0 kW): all read back and confirmed; no alerts; state On / Normal throughout.
 Observation: measured power read 2 or 3 kW for a 3 kW setpoint (charge 3, then 2, then 3; discharge 2 both times): consistent with a real value near 2.5 kW in a whole-kW register (+/- 1 kW); engineer's screen may show decimals.
-Dashboard note: the Run now form resets to its defaults (500 kW, 3600 s) when the page auto-refreshes, and enforces a 60 s minimum. The test steps were therefore sent with the values set and the button pressed in one step.
+Dashboard note: the page's layout shifts while its status tiles load, so a click or a typed value placed by screen position could land on the wrong field; the test steps were therefore sent with the values set and the button pressed in one step. (An earlier version of this note said the form resets itself when the page refreshes; that was wrong: the form is static and the refresh code never touches it.) The Run now form defaults to 500 kW and 3600 s and enforces a 60 s minimum.
 Evidence: recordings\bms_20261016_184735.csv, audit log rows 19:08 to 19:11 UTC.
 
 ## Test 8: Utility link loss: PASS (12:15:44 to 12:22:20)
