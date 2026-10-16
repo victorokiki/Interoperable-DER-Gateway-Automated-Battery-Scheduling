@@ -38,7 +38,10 @@ TRAIL = ("schedule_received", "ieee_response", "schedule_status", "authority", "
 async def rig(tmp_path, util, fake=None):
     """capstone/__main__.py's wiring around one FakeBMS and one utility."""
     audit = AuditLog(db_path=tmp_path / "audit.db")
-    driver, state = await make_driver(fake or FakeBMS(), audit_log=audit)
+    # register_pacing=False: this rig runs a connect, a dispatch and a status read back to back (about 100 registers in
+    # under a second). The driver would spread that over about 2 s (it paces to 45 registers a second), so a reading
+    # that these tests expect to be 0 s old would be 1 s old. These tests are about the dashboard, not the pacing.
+    driver, state = await make_driver(fake or FakeBMS(), audit_log=audit, register_pacing=False)
     rm = ReliabilityManager({"offline_timeout_sec": 30}, state, audit_log=audit)
     sched = Scheduler({}, state, driver, audit_log=audit, reliability_manager=rm)
     client = IEEEClient({"ieee_server_url": util.url, "ieee_poll_interval_sec": 5, "offline_timeout_sec": 30},
