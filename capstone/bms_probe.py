@@ -26,6 +26,7 @@ from capstone import modbus_driver as d
 PASS, WARN, FAIL, INFO = "PASS", "WARN", "FAIL", "INFO"
 PAUSE_SEC = 0.15          # between requests: far below the BMS limit of 50 registers a second (5.2)
 HEARTBEAT_WAIT_SEC = 2.2  # 31003 increments once a second
+MONITOR_PORT = 5030       # SPC100644 Rev 05 section 3: the read-only monitoring port
 
 # SPC100644 Rev 05, 31039 BMS Alerts. The table numbers its rows 1 to 32 ("7 to 32 Unused" in a 32-bit
 # register), while the Control Status table beside it counts bits from 0, so the numbering is ambiguous:
@@ -71,7 +72,7 @@ async def find_unit(client, preferred, checks):
     return None, None
 
 
-async def run_checks(client, unit_id=d.DEFAULT_UNIT_ID, heartbeat_wait=HEARTBEAT_WAIT_SEC):
+async def run_checks(client, unit_id=d.DEFAULT_UNIT_ID, heartbeat_wait=HEARTBEAT_WAIT_SEC, skip_holding=False):
     """Read the BMS and return a list of Check. `client` is any pymodbus-style client that is
     already connected; only its two read methods are ever called."""
     checks = []
@@ -190,6 +191,12 @@ async def run_checks(client, unit_id=d.DEFAULT_UNIT_ID, heartbeat_wait=HEARTBEAT
                                 "Alert bits are set. Ask Invinity which numbering their BMS uses and what is active. "
                                 "'No Active Controller' is expected while nothing is sending the heartbeat."))
 
+    if skip_holding:
+        checks.append(Check("Control registers (41xxx)", INFO, "not read",
+                            "The read-only monitoring port shows zeros for the control registers (found on the real BMS: the "
+                            "gateway read the caps and dispatch modes on the control port and they differed). Their "
+                            "values are shown by the gateway on the control port, and the dashboard."))
+        return checks
     # Holding registers: what is currently commanded. Read only.
     regs, why = await _read(client, "holding", d.REG_OPERATING_COMMAND, 1, unit)
     if regs is None:
@@ -240,7 +247,7 @@ def format_report(checks, host, port):
     return "\n".join(lines)
 
 
-async def probe(host, port, unit, timeout):
+async def probe(host, port, unit, timeout, skip_holding=False):
     """Connect and run the checks; None when the connection could not be made."""
     client = AsyncModbusTcpClient(host=host, port=port, timeout=timeout)
     try:
@@ -251,7 +258,7 @@ async def probe(host, port, unit, timeout):
         client.close()
         return None
     try:
-        return await run_checks(client, unit)
+        return await run_checks(client, unit, skip_holding=skip_holding)
     finally:
         client.close()
 
@@ -268,9 +275,9 @@ def main(argv=None):
     ap.add_argument("--no-save", action="store_true", help="do not save the report under probe_reports/")
     args = ap.parse_args(argv)
 
-    note = " - the BMS read-only monitoring port (SPC100644 Rev 05, section 3)" if args.port == 5030 else ""
+    note = " - the BMS read-only monitoring port (SPC100644 Rev 05, section 3)" if args.port == MONITOR_PORT else ""
     print(f"Connecting to {args.host}:{args.port} (read-only){note}...")
-    checks = asyncio.run(probe(args.host, args.port, args.unit, args.timeout))
+    checks = asyncio.run(probe(args.host, args.port, args.unit, args.timeout, skip_holding=args.port == MONITOR_PORT))
     if checks is None:
         print(f"\n[FAIL] Could not connect to {args.host}:{args.port}.\n"
               f"  1. Are you on Invinity's network? Try:  ping {args.host}\n"

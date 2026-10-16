@@ -155,3 +155,10 @@ def test_a_set_alert_bit_names_both_readings_of_the_specs_row_numbers():
 
 def test_no_alert_bits_is_a_pass():
     assert by_name(probe(FakeBMS()), "Alerts").status == PASS
+
+
+def test_on_the_monitoring_port_the_control_registers_are_not_reported():
+    """Found on the real BMS: port 5030 shows zeros for 41xxx, so the cap and dispatch-mode lines misled."""
+    checks = probe(FakeBMS(bms_type=1), skip_holding=True)
+    assert by_name(checks, "Control registers").value == "not read"
+    assert not any(c.name.startswith(("Operator", "Dispatch modes", "Operating command")) for c in checks)
