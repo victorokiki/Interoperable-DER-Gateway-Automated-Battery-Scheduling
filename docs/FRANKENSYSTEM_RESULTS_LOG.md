@@ -128,3 +128,6 @@ Event received 15:50:24. Server stopped 15:52:12 (first failed poll 15:52:16: CO
 15:58:32 cable back: **reconnected after 36 attempts, stable (no flapping), 0 kW written and confirmed after 363 failed attempts**; DISCONNECTED -> SAFE_IDLE. 15:59:31 server back: SAFE_IDLE -> CONNECTED.
 Recording gap 15:52:06 to 15:58:30 (183 rows with a note); at the first sample after reconnect the BMS was On / Normal, alerts 0x00000000 (**no alert after about 6.5 minutes without a controller**), and our heartbeat echo was stale (39796 against 40184) and caught up within 2 s.
 Evidence: audit rows 22:50 to 22:59 UTC; recordings\bms_20261016_224943.csv.
+
+## Test 13E: Event first seen after it expired: PASS in two layers (16:01)
+Trying to add an event that started about 30 minutes earlier (15:30 to 15:31) on the Schedule page: **the utility side refused it ("Not added. The start time is in the past.")**; nothing reached the gateway and nothing ran. The gateway's own rejection (an event received after it ended is answered 254, "Rejected, event received after it had expired", and never runs) is covered by tests/test_ieee_responses.py (an event that is "already over" gets [254]; 40 tests in that file pass), because the dashboard will not let us send an expired event to the gateway. No battery power was involved.
