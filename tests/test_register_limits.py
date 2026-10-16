@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from capstone.audit_log import AuditLog
-from capstone.modbus_driver import MAX_REGISTER_RATE, MAX_REGISTERS_PER_REQUEST
+from capstone.modbus_driver import MAX_REGISTER_RATE, MAX_REGISTERS_PER_REQUEST, REGISTER_PACE_LIMIT
 from fakes import FakeBMS, audit_rows, make_driver
 
 
@@ -100,7 +100,7 @@ def test_start_up_taking_over_and_the_first_setpoint_stay_inside_the_rate_limit(
 def test_going_over_50_a_second_is_audited_once_and_so_is_the_recovery(tmp_path):
     async def run():
         audit = AuditLog(db_path=tmp_path / "audit.db")
-        driver, _ = await make_driver(audit_log=audit)
+        driver, _ = await make_driver(audit_log=audit, register_pacing=False)   # the detector, without the pacing
         quiet = len(audit_rows(audit, "bms_condition"))
         for _ in range(30):                                        # 60 registers, back to back
             await driver._client.read_input_registers(1000, count=2, slave=255)
@@ -139,3 +139,37 @@ def test_the_fake_drops_requests_above_50_a_second_when_asked_to():
         return answered, fake
     answered, fake = asyncio.run(run())
     assert answered == 16 and len(fake.dropped) == 4               # dropped: never answered, never queued
+
+
+def test_pacing_spreads_a_burst_so_no_second_holds_more_than_the_limit(tmp_path):
+    """Found on the real BMS: a scheduled start landed on a heartbeat, a recorder sample and a dispatch in the same
+    second (51 registers, one over; the BMS silently drops the excess). The driver now waits instead."""
+    import time
+
+    async def run():
+        audit = AuditLog(db_path=tmp_path / "audit.db")
+        fake = FakeBMS()
+        driver, _ = await make_driver(fake, audit_log=audit)
+        quiet = len(audit_rows(audit, "bms_condition"))
+        mark = len(fake.access_log)
+        started = time.monotonic()
+        for _ in range(30):                                        # 60 registers asked for back to back
+            await driver._client.read_input_registers(1000, count=2, slave=255)
+        return driver, fake, mark, time.monotonic() - started, audit_rows(audit, "bms_condition")[quiet:]
+    driver, fake, mark, took, rows = asyncio.run(run())
+    assert _peak(fake.access_log[mark:]) <= REGISTER_PACE_LIMIT      # the BMS never saw more than the pacing limit
+    assert driver.register_meter.peak_rate <= REGISTER_PACE_LIMIT
+    assert took > 0.3                                                # it waited rather than flooding
+    assert [r for r in rows if r["outcome"] == "over_limit"] == []
+
+
+def test_pacing_does_not_slow_normal_traffic():
+    import time
+
+    async def run():
+        driver, _ = await make_driver()
+        started = time.monotonic()
+        for _ in range(5):                                         # 10 registers: far under the limit
+            await driver._client.read_input_registers(1000, count=2, slave=255)
+        return time.monotonic() - started
+    assert asyncio.run(run()) < 0.2

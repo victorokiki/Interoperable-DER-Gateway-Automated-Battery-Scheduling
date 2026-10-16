@@ -158,6 +158,7 @@ DEFAULT_UNIT_ID = 255     # Modbus TCP: 0xFF for a device addressed directly by 
 PROBE_UNIT_IDS = (1, 0)   # E9: tried after the configured unit ID
 PROBE_TIMEOUT_SEC = 2.0   # shorter than pymodbus' 3 s, so an unanswered probe never drops the link
 MAX_REGISTERS_PER_REQUEST = 25   # SPC100644 §5.1: per read and per write; more gets exception 03
+REGISTER_PACE_LIMIT = 45         # the driver waits rather than ask for more than this in any 1 s (the BMS drops above 50)
 MAX_REGISTER_RATE = 50           # §5.2: register accesses per second per server, all clients together;
                                  # requests above it are dropped, not queued
 REGISTER_RATE_WINDOW_SEC = 1.0
@@ -186,6 +187,18 @@ class RegisterMeter:
         rate = sum(n for _, n in self._recent)
         self.peak_rate = max(self.peak_rate, rate)
         return rate
+
+    async def wait_for_room(self, count: int, limit: int = REGISTER_PACE_LIMIT):
+        """Sleep until `count` more registers fit under `limit` in the last window, so a burst (a dispatch, a
+        status poll, a recorder sample landing in the same second) is spread out instead of being dropped by the
+        BMS. No await between this returning and note(), so two requests cannot both take the last room."""
+        while True:
+            now = time.monotonic()
+            self._recent = [(t, n) for t, n in self._recent if now - t < REGISTER_RATE_WINDOW_SEC]
+            if sum(n for _, n in self._recent) + count <= limit or not self._recent:
+                return
+            oldest = min(t for t, _ in self._recent)
+            await asyncio.sleep(max(0.005, oldest + REGISTER_RATE_WINDOW_SEC - now + 0.005))
 
     @property
     def rate(self) -> int:
@@ -274,6 +287,10 @@ class ModbusDriver:
         # E1: may the gateway command a BMS it finds Off at a take-over out of Off?
         self.start_from_off = config.get("bms_start_from_off", True)
         self.register_meter = RegisterMeter()
+        # Pace every request so no 1 s window holds more than REGISTER_PACE_LIMIT registers: found on the real
+        # BMS, where a scheduled start landed on a heartbeat, a recorder sample and a dispatch in the same second
+        # (51 registers, one over what the BMS accepts; it silently drops the excess).
+        self.pace_registers = bool(config.get("register_pacing", True))
         # Rev 05 6.2.4: the strings need about a second to connect to the DC bus after On, and power commanded
         # at once can leave some of them out. No non-zero setpoint until the BMS has been On this long.
         self.on_settle_sec = float(config.get("bms_on_settle_sec", ON_SETTLE_SEC))
@@ -357,6 +374,8 @@ class ModbusDriver:
             if count > MAX_REGISTERS_PER_REQUEST:
                 raise ValueError(f"{name} of {count} registers exceeds the BMS limit of "
                                  f"{MAX_REGISTERS_PER_REQUEST} per request (SPC100644 §5.1)")
+            if self.pace_registers:
+                await self.register_meter.wait_for_room(count)
             rate = self.register_meter.note(count)
             over = rate > MAX_REGISTER_RATE
             if over or self._reported.get("register_rate"):    # audit going over, and the recovery

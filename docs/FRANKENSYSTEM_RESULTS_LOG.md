@@ -86,3 +86,13 @@ Audit: 271 rows; all 8 events have a received / active / completed-or-cancelled 
 Event 2779007F added at 12:50:36 on the Schedule page ("at a set time", Pacific): charge 3 kW, 12:55:00 to 12:56:00. The gateway held it as scheduled for 4 min 24 s.
 **Start: 0 s after the scheduled time** (audit second resolution): active, +3 kW written and confirmed at 19:55:00 UTC; EventStarted reply 19:55:01. BMS-measured power 0 at 12:55:01 and 2 kW at 12:55:03 (the BMS took 1 to 3 s to follow). **End: 0 s after the scheduled end**: window ended, 0 kW written and confirmed at 19:56:00, measured 0 at 12:56:01; EventCompleted reply 19:56:01. No alerts; On / Normal throughout.
 Evidence: audit rows 19:50 to 19:56 UTC; recordings\bms_20261016_184735.csv.
+
+## Test 12 repeat (13:00): PASS
+Event 0045094D (13:00:00 to 13:01:00, 3 kW charge, server up): started 0 s after the scheduled time, ended 0 s after the scheduled end; EventStarted and EventCompleted delivered. (Meant for test 13A, but the server was not stopped in time, so it became a second clean scheduled start.)
+
+## Test 13A: Utility server down when the scheduled start passes: PASS (event 25F6103A, 13:18:00 to 13:19:00)
+Event received at 13:11:18, then the server was stopped (first failed poll 13:11:54, 91 failed polls, restored about 13:19:26). While down and before the start: CONNECTED -> DERATED 13:11:54, -> DISCONNECTED 13:12:05, -> SAFE_IDLE 13:12:19 (nothing active, 0 kW confirmed).
+**13:18:00 the event started on its own, 0 s after the scheduled time** (+3 kW written and confirmed; SAFE_IDLE -> AUTONOMOUS), BMS-measured 2 kW from 13:18:00; **13:19:00 ended on time** (0 kW written and confirmed, AUTONOMOUS -> SAFE_IDLE); measured 0 by 13:19:03. Server back: SAFE_IDLE -> CONNECTED at 13:19:30.
+Replies: EventStarted failed at 13:18:02 (no server) and was retried (5 failed attempts) and delivered at 13:20:38 together with EventCompleted; nothing lost.
+**Finding (register rate): at 13:18:01 the gateway's meter recorded 51 registers requested in 1 s, one over the BMS limit of 50** (SPC100644 5.2: the BMS silently drops the excess). The start of the scheduled event landed on a heartbeat, a recorder sample and the dispatch's own reads in the same second. Only occurrence in the session (the earlier peak was 48). **This revises the test 10 load result: one 1-second window exceeded 50.** The meter only detected it. Fixed: the driver now paces its requests so no 1 s window holds more than 45 registers (it waits rather than asking), with tests; the audit rows for it remain as a detector (pacing can be switched off for tests).
+Evidence: audit rows 20:11 to 20:21 UTC; recordings\bms_20261016_184735.csv.

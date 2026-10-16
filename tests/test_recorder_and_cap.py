@@ -120,7 +120,7 @@ def read_rows(path):
 def test_the_recorder_writes_the_measured_power_next_to_the_commanded_setpoint(tmp_path):
     async def go():
         fake = FakeBMS(bms_type=1)
-        driver, state = await make_driver(fake)
+        driver, state = await make_driver(fake, register_pacing=False)
         await driver.set_power(3.0, source="test")
         rec = await record_for(driver, state, tmp_path, 0.6)
         return rec, fake
@@ -156,7 +156,7 @@ def test_a_failed_read_is_a_row_with_a_note_not_a_crash(tmp_path):
 def test_the_recorder_keeps_every_row_in_the_file_as_it_goes(tmp_path):
     """Flushed row by row, so a crash or a pulled plug still leaves everything recorded so far."""
     async def go():
-        driver, state = await make_driver(FakeBMS(bms_type=1))
+        driver, state = await make_driver(FakeBMS(bms_type=1), register_pacing=False)
         rec = Recorder(driver, state, tmp_path, 0.1)
         task = asyncio.create_task(rec.run())
         await asyncio.sleep(0.45)
