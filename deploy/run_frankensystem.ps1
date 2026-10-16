@@ -1,10 +1,11 @@
-# Loads deploy/frankensystem.env and runs ONE of: the read-only check, or the gateway.
+# Loads deploy/frankensystem.env and runs ONE of: the read-only check, the utility server, or the gateway.
 #
 #   .\deploy\run_frankensystem.ps1 check     # reads the battery and prints PASS / WARN / FAIL. Writes nothing.
-#   .\deploy\run_frankensystem.ps1 gateway   # runs the gateway with the settings in the file
+#   .\deploy\run_frankensystem.ps1 server    # our simulated utility server + dashboard (window 1, leave it running)
+#   .\deploy\run_frankensystem.ps1 gateway   # the gateway (window 2). Needs the server running first.
 #
 # Run it from the project folder, with the virtual environment active (.venv\Scripts\Activate.ps1).
-param([Parameter(Mandatory = $true)][ValidateSet("check", "gateway")][string]$What)
+param([Parameter(Mandatory = $true)][ValidateSet("check", "server", "gateway")][string]$What)
 
 $envFile = Join-Path $PSScriptRoot "frankensystem.env"
 if (-not (Test-Path $envFile)) {
@@ -23,12 +24,39 @@ if ($env:MODBUS_HOST -like "CHANGE_ME*") {
     exit 1
 }
 
+function Get-Gateways {
+    Get-CimInstance Win32_Process | Where-Object { $_.Name -match "python" -and $_.CommandLine -match "-m capstone(\s|$)" }
+}
+
 if ($What -eq "check") {
     # Prefer the BMS's read-only monitoring port (MONITOR_PORT, 5030 in SPC100644 Rev 05): the BMS itself refuses
     # writes there and several clients may connect. The control port (MODBUS_PORT) takes ONE client at a time.
     $port = if ($env:MONITOR_PORT) { $env:MONITOR_PORT } else { $env:MODBUS_PORT }
     python -m capstone.bms_probe --host $env:MODBUS_HOST --port $port --unit $env:MODBUS_UNIT_ID
     exit $LASTEXITCODE
+}
+
+if ($What -eq "server") {
+    python simulators\fake_grid_server.py
+    exit $LASTEXITCODE
+}
+
+# --- gateway ---------------------------------------------------------------------------------------------
+# The BMS control port accepts ONE client. A second gateway would keep knocking the first one off.
+$running = @(Get-Gateways)
+if ($running.Count -gt 0) {
+    $ids = ($running | ForEach-Object { $_.ProcessId }) -join ", "
+    Write-Host "A gateway is already running (PID $ids)." -ForegroundColor Red
+    Write-Host "The BMS control port takes only ONE client, so two gateways fight over it. Stop the old one first" -ForegroundColor Red
+    Write-Host "(Ctrl+C in its window, or close that window), then run this again." -ForegroundColor Red
+    exit 1
+}
+# The gateway takes its schedule from the utility server on this laptop, so that must be running first.
+$serverUp = (Test-NetConnection -ComputerName 127.0.0.1 -Port 5001 -WarningAction SilentlyContinue).TcpTestSucceeded
+if (-not $serverUp) {
+    Write-Host "The utility server is not running on this laptop (port 5001)." -ForegroundColor Red
+    Write-Host "Open another PowerShell window here, activate the venv, and run:  .\deploy\run_frankensystem.ps1 server" -ForegroundColor Red
+    exit 1
 }
 
 if ($env:BMS_READ_ONLY -ne "1") {

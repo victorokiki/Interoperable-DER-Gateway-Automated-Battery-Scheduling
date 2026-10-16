@@ -41,8 +41,11 @@ The check uses the BMS's **read-only monitoring port** (`MONITOR_PORT`, 5030 in 
 - [ ] The report was saved in `probe_reports\`. Keep it as evidence.
 
 ### 3. Read-only gateway
-In a second PowerShell window (project folder, venv active) start our simulated utility server first: `python simulators\fake_grid_server.py`. Then:
+**Two windows, one gateway.** The BMS control port takes only ONE client, so never run two gateways (the launcher now refuses). Open two PowerShell windows in the project folder and run `.venv\Scripts\Activate.ps1` in each.
 ```powershell
+# window 1 (leave it running)
+.\deploy\run_frankensystem.ps1 server
+# window 2
 .\deploy\run_frankensystem.ps1 gateway
 ```
 - [ ] The banner says **BMS access: READ-ONLY**.
