@@ -277,6 +277,9 @@ class ModbusDriver:
         # Rev 05 6.2.4: the strings need about a second to connect to the DC bus after On, and power commanded
         # at once can leave some of them out. No non-zero setpoint until the BMS has been On this long.
         self.on_settle_sec = float(config.get("bms_on_settle_sec", ON_SETTLE_SEC))
+        # BMS_MAX_POWER_KW: a hard ceiling for this run on any setpoint, whatever the BMS allows and
+        # whoever asks (the dashboard's Run now defaults to 500 kW). 0 = no cap of our own.
+        self.max_power_kw = int(config.get("bms_max_power_kw", 0))
         self._on_since = None   # monotonic time the BMS was first seen On (None: not On, or not seen yet)
         # BMS_READ_ONLY: look but never touch. Every write is refused before it leaves the gateway.
         self.read_only = bool(config.get("bms_read_only", False))
@@ -947,6 +950,11 @@ class ModbusDriver:
             elif self._reported.get("operator_caps") is not None:
                 self._report("operator_caps", None, "operator caps 41014 / 41016 removed", "observed")
             limits = [min(limit, cap) if cap else limit for limit, cap in zip(limits, caps)]
+        if self.max_power_kw > 0:
+            self._report("max_power_cap", self.max_power_kw,
+                         f"BMS_MAX_POWER_KW={self.max_power_kw}: setpoints are held to {self.max_power_kw} kW "
+                         f"whatever is requested", "observed")
+            limits = [min(limit, self.max_power_kw) for limit in limits]
         self.limits_kw = tuple(limits)
         self.state.limits_kw = {"max_charge_kw": self.limits_kw[0], "max_discharge_kw": self.limits_kw[1]}
         return self.limits_kw

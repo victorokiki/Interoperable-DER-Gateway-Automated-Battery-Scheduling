@@ -55,6 +55,7 @@ The check uses the BMS's **read-only monitoring port** (`MONITOR_PORT`, 5030 in 
 ### 4. One small command (only with the Invinity engineer beside you saying yes)
 - [ ] They confirm: stop control in reach, limits agreed, the battery is not needed for anything else.
 - [ ] Stop the gateway (Ctrl+C). In `deploy\frankensystem.env` change `BMS_READ_ONLY=0`. Start it again and type `YES` when asked.
+- [ ] Check the gateway's start-up text: **Power cap** shows the limit the engineer agreed (`BMS_MAX_POWER_KW`, 5 by default; raise it only as far as they allow) and **Recording** shows a folder. Whatever is typed in Run now, the gateway never writes more than the cap (a 500 kW request is held to the cap).
 - [ ] Send one **short, low-power** event (a few kW, a few minutes) from the dashboard.
   - Expect about **5 seconds** before power moves if the battery has only just turned On: the gateway waits on purpose (Rev 05 spec 6.2.4) so every string can connect. The dashboard/audit log shows "settling", then the write.
 - [ ] Their monitor shows the power following ours. Note the time: ______
@@ -64,6 +65,7 @@ The check uses the BMS's **read-only monitoring port** (`MONITOR_PORT`, 5030 in 
 - [ ] Set `BMS_READ_ONLY=1` again.
 - [ ] Export the audit log and report from the dashboard (Reports page).
 - [ ] Save the `probe_reports\` files and any packet capture.
+- [ ] Save the `recordings\bms_*.csv` file(s): one row every 2 s with what the BMS itself measured (power, charge, state, health) next to what we commanded. It is the evidence of what the battery did, whatever the screens showed.
 - [ ] Thank them, and report anything odd (including the BMS that looked reachable from the internet).
 
 ## If something goes wrong

@@ -48,6 +48,7 @@ from capstone.audit_log import AuditLog
 from capstone.reliability import ReliabilityManager
 from capstone.reporting import Reporter, device_pen
 from capstone.event_bus import EventBus
+from capstone.recorder import Recorder
 
 log = logging.getLogger("capstone.main")
 
@@ -114,6 +115,14 @@ def load_config() -> dict:
         # SPC100644 Rev 05 6.2.4 recommends at least 5 s between the BMS reporting On and the first
         # non-zero setpoint, so every string can connect to the DC bus.
         "bms_on_settle_sec":     _whole_number("BMS_ON_SETTLE_SEC", "5"),
+        # A ceiling of our own on every setpoint (kW), for the first tests on real hardware: the
+        # dashboard's Run now defaults to 500 kW, and a typo should never reach a real battery.
+        # 0 = none (the BMS's own limits still apply).
+        "bms_max_power_kw":      _whole_number("BMS_MAX_POWER_KW", "0"),
+        # Record the BMS's measured power, state and charge to a CSV every few seconds, as evidence.
+        "record_bms":            _yes_no("RECORD_BMS", "0"),
+        "record_interval_sec":   _whole_number("RECORD_INTERVAL_SEC", "2"),
+        "record_dir":            os.environ.get("RECORD_DIR", "recordings").strip() or "recordings",
         # Look but never touch: the gateway reads the BMS and refuses every write
         # to it. Use it for a first connection to real hardware.
         "bms_read_only":         _yes_no("BMS_READ_ONLY", "0"),
@@ -145,6 +154,11 @@ def load_config() -> dict:
         raise ConfigError(f"IEEE_POLL_INTERVAL_SEC must be at least 1, got {config['ieee_poll_interval_sec']}")
     if config["offline_timeout_sec"] < 1:
         raise ConfigError(f"OFFLINE_TIMEOUT_SEC must be at least 1, got {config['offline_timeout_sec']}")
+    if config["bms_max_power_kw"] < 0:
+        raise ConfigError(f"BMS_MAX_POWER_KW must be 0 (no cap) or a number of kW, got {config['bms_max_power_kw']}")
+    if config["record_interval_sec"] < 1:
+        raise ConfigError(f"RECORD_INTERVAL_SEC must be at least 1 (the BMS allows 50 register reads a second "
+                          f"for everyone), got {config['record_interval_sec']}")
     if config["bms_on_settle_sec"] < 0:
         raise ConfigError(f"BMS_ON_SETTLE_SEC must be 0 or more, got {config['bms_on_settle_sec']}")
     if not 1 <= config["modbus_port"] <= 65535:
@@ -188,6 +202,10 @@ def print_banner(config: dict):
           f"{config['modbus_unit_id']}, then 1 and 0 if it does not answer)")
     if config["bms_read_only"]:
         print("  BMS access         : READ-ONLY (BMS_READ_ONLY=1) - nothing is written to the BMS")
+    print("  Power cap          : " + (f"{config['bms_max_power_kw']} kW (BMS_MAX_POWER_KW)"
+                                         if config["bms_max_power_kw"] else "none of our own (the BMS's limits apply)"))
+    if config["record_bms"]:
+        print(f"  Recording          : every {config['record_interval_sec']} s to {config['record_dir']}\\ (RECORD_BMS=1)")
     print(f"  After On           : no non-zero setpoint for {config['bms_on_settle_sec']} s (SPC100644 Rev 05 6.2.4)")
     print(f"  BMS found Off      : " + ("started when the gateway takes over" if config["bms_start_from_off"]
                                          else "left Off (BMS_START_FROM_OFF=0)"))
@@ -317,6 +335,10 @@ async def run():
         "event_bus_logger":   lambda: event_bus_logger(event_bus),
         "status_publisher":   lambda: publish_status_loop(state, reliability),
     }
+    if config["record_bms"]:
+        recorder = Recorder(modbus, state, config["record_dir"], config["record_interval_sec"])
+        loops["bms_recorder"] = recorder.run
+        log.info(f"Recording the BMS to {recorder.path}")
     tasks = [asyncio.create_task(supervise(name, factory, audit_log), name=name)
              for name, factory in loops.items()]
 

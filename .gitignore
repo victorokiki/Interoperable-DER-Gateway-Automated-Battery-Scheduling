@@ -24,3 +24,5 @@ Thumbs.db
 runtime/
 probe_reports/
 deploy/frankensystem.env
+recordings/
+recordings_check/
