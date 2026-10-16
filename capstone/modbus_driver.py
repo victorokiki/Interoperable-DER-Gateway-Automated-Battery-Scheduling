@@ -152,6 +152,7 @@ INT32_MIN, INT32_MAX = -(1 << 31), (1 << 31) - 1
 HEARTBEAT_STALE_SEC = 5   # 31003 increments every 1 s (spec p.23)
 HEARTBEAT_RESUME_SEC = 10  # E4: incrementing again this long before dispatch resumes
 AUTO_ON_LIMIT, AUTO_ON_WINDOW_SEC = 3, 3600   # E1: automatic On outside a take-over
+ON_SETTLE_SEC = 5.0       # SPC100644 Rev 05 6.2.4: wait this long after the BMS reports On before any non-zero setpoint
 COMMAND_SETTLE_SEC = 1.0  # E2: between Standby and On, so a BMS that scans for changes sees both
 DEFAULT_UNIT_ID = 255     # Modbus TCP: 0xFF for a device addressed directly by IP
 PROBE_UNIT_IDS = (1, 0)   # E9: tried after the configured unit ID
@@ -273,6 +274,10 @@ class ModbusDriver:
         # E1: may the gateway command a BMS it finds Off at a take-over out of Off?
         self.start_from_off = config.get("bms_start_from_off", True)
         self.register_meter = RegisterMeter()
+        # Rev 05 6.2.4: the strings need about a second to connect to the DC bus after On, and power commanded
+        # at once can leave some of them out. No non-zero setpoint until the BMS has been On this long.
+        self.on_settle_sec = float(config.get("bms_on_settle_sec", ON_SETTLE_SEC))
+        self._on_since = None   # monotonic time the BMS was first seen On (None: not On, or not seen yet)
         # BMS_READ_ONLY: look but never touch. Every write is refused before it leaves the gateway.
         self.read_only = bool(config.get("bms_read_only", False))
         self._client = AsyncModbusTcpClient(host=self.host, port=self.port)
@@ -293,7 +298,8 @@ class ModbusDriver:
         # "not_ready", "limits_unavailable", "out_of_range", "verify_failed",
         # "readback_mismatch", "bms_state", "user_controlled",
         # "not_dispatchable" (DC-configured, E8), "bms_unhealthy" (frozen
-        # heartbeat, E4), "grid_modes" (E7), "error"; None after a success.
+        # heartbeat, E4), "grid_modes" (E7), "settling" (On for under 5 s, Rev 05 6.2.4:
+        # a retry, never a rejection), "error"; None after a success.
         self.last_dispatch_error: tuple | None = None
         self.limits_kw: tuple | None = None   # (max_charge_kw, max_discharge_kw), both >= 0
         self._written = None                  # (register, words) of the confirmed setpoint
@@ -365,6 +371,7 @@ class ModbusDriver:
     async def connect(self):
         log.info(f"Connecting to Modbus TCP at {self.host}:{self.port}")
         self._forget_setpoint()   # device state unknown until the next confirmed write
+        self._on_since = None     # how long it has been On is unknown again after a (re)connect
         await self._client.connect()
         self._track_link()
         if not self._client.connected:
@@ -561,7 +568,30 @@ class ModbusDriver:
         self._report("operating_state", state, f"BMS operating state {self.state.operating_state}",
                      "observed")
         self._note_control_mode(mode)
+        self._track_on(state)
         return state, mode
+
+    def _track_on(self, state: int):
+        """Remember when the BMS was first seen On, and forget it as soon as it is seen in any other state."""
+        if state != STATE_ON:
+            self._on_since = None
+        elif self._on_since is None:
+            self._on_since = time.monotonic()
+
+    async def _on_settling(self):
+        """Rev 05 6.2.4: None when a non-zero setpoint may be written, else ("settling", why). A BMS first seen
+        On (also at gateway start-up, when the time is unknown) is waited for on_settle_sec before power is
+        commanded; one in any other state is left to the checks that follow, which refuse it."""
+        if self.on_settle_sec <= 0:
+            return None
+        state, _ = await self._read_state_and_mode()
+        if state != STATE_ON or self._on_since is None:
+            return None
+        seen = time.monotonic() - self._on_since
+        if seen >= self.on_settle_sec:
+            return None
+        return ("settling", f"BMS has been On for {seen:.1f} s: no non-zero setpoint until {self.on_settle_sec:g} s "
+                            f"so its strings can connect to the DC bus (SPC100644 Rev 05 6.2.4); retrying")
 
     def _note_control_mode(self, mode: int):
         """Record 31036. An operator handing control back (User-Controlled
@@ -749,6 +779,11 @@ class ModbusDriver:
             return False
 
         async with self._lock:
+            settling = await self._on_settling()
+            if settling is not None:
+                self._record_dispatch(None, None, source, settling)
+                self._audit_write(source, power_kw, None, None, f"not written: {settling[1]}")
+                return False
             if self._grid_modes is not True:
                 blocked = await self._ensure_grid_modes()
                 await self._raise_pending_alarm()

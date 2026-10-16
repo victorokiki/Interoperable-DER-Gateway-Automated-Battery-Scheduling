@@ -111,6 +111,9 @@ def load_config() -> dict:
         # start-up, a reconnection, a BMS restart, an operator handing back
         # control)? An Off that appears while it runs is never overridden.
         "bms_start_from_off":    _yes_no("BMS_START_FROM_OFF", "1"),
+        # SPC100644 Rev 05 6.2.4 recommends at least 5 s between the BMS reporting On and the first
+        # non-zero setpoint, so every string can connect to the DC bus.
+        "bms_on_settle_sec":     _whole_number("BMS_ON_SETTLE_SEC", "5"),
         # Look but never touch: the gateway reads the BMS and refuses every write
         # to it. Use it for a first connection to real hardware.
         "bms_read_only":         _yes_no("BMS_READ_ONLY", "0"),
@@ -142,6 +145,8 @@ def load_config() -> dict:
         raise ConfigError(f"IEEE_POLL_INTERVAL_SEC must be at least 1, got {config['ieee_poll_interval_sec']}")
     if config["offline_timeout_sec"] < 1:
         raise ConfigError(f"OFFLINE_TIMEOUT_SEC must be at least 1, got {config['offline_timeout_sec']}")
+    if config["bms_on_settle_sec"] < 0:
+        raise ConfigError(f"BMS_ON_SETTLE_SEC must be 0 or more, got {config['bms_on_settle_sec']}")
     if not 1 <= config["modbus_port"] <= 65535:
         raise ConfigError(f"MODBUS_PORT must be 1-65535, got {config['modbus_port']}")
     if not 0 <= config["modbus_unit_id"] <= 255:
@@ -183,6 +188,7 @@ def print_banner(config: dict):
           f"{config['modbus_unit_id']}, then 1 and 0 if it does not answer)")
     if config["bms_read_only"]:
         print("  BMS access         : READ-ONLY (BMS_READ_ONLY=1) - nothing is written to the BMS")
+    print(f"  After On           : no non-zero setpoint for {config['bms_on_settle_sec']} s (SPC100644 Rev 05 6.2.4)")
     print(f"  BMS found Off      : " + ("started when the gateway takes over" if config["bms_start_from_off"]
                                          else "left Off (BMS_START_FROM_OFF=0)"))
     print(f"  Utility transport  : {config['transport']}")

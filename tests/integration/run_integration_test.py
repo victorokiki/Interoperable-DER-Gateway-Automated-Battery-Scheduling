@@ -61,6 +61,7 @@ CONFIG = {
     "offline_timeout_sec": 8,  # short on purpose so the fault test doesn't take forever
     "modbus_host": MODBUS_HOST,
     "modbus_port": MODBUS_PORT,
+    "bms_on_settle_sec": 0,   # the 5 s hold after On (Rev 05 6.2.4) is not what these scripts test
 }
 
 

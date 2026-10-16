@@ -53,6 +53,7 @@ In a second PowerShell window (project folder, venv active) start our simulated 
 - [ ] They confirm: stop control in reach, limits agreed, the battery is not needed for anything else.
 - [ ] Stop the gateway (Ctrl+C). In `deploy\frankensystem.env` change `BMS_READ_ONLY=0`. Start it again and type `YES` when asked.
 - [ ] Send one **short, low-power** event (a few kW, a few minutes) from the dashboard.
+  - Expect about **5 seconds** before power moves if the battery has only just turned On: the gateway waits on purpose (Rev 05 spec 6.2.4) so every string can connect. The dashboard/audit log shows "settling", then the write.
 - [ ] Their monitor shows the power following ours. Note the time: ______
 - [ ] Cancel it from the dashboard. Power returns to 0. Note the time: ______
 

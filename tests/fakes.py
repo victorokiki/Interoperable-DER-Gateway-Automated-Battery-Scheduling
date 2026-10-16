@@ -276,7 +276,9 @@ async def make_driver(fake=None, audit_log=None, state=None, event_bus=None, **s
     connected (BMS type read, On sent). settings are extra config keys
     (e.g. modbus_unit_id). Must run inside an event loop."""
     state = state or GatewayState()
-    driver = ModbusDriver({"modbus_host": "127.0.0.1", "modbus_port": 9, "offline_timeout_sec": 30, **settings},
+    # bms_on_settle_sec=0: the 5 s hold after On (Rev 05 6.2.4) would slow every other test; its own tests set it.
+    driver = ModbusDriver({"modbus_host": "127.0.0.1", "modbus_port": 9, "offline_timeout_sec": 30,
+                           "bms_on_settle_sec": 0, **settings},
                           state, audit_log=audit_log, event_bus=event_bus)
     driver._client = fake if fake is not None else FakeBMS()
     await driver.connect()

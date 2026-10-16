@@ -263,7 +263,8 @@ def make_driver(fake=None, audit_log=None, offline_timeout=30):
     """Real ModbusDriver with the pymodbus client swapped for FakeBMS.
     Must be called inside a running event loop (pymodbus requires it)."""
     state = GatewayState()
-    drv = ModbusDriver({"modbus_host": "127.0.0.1", "modbus_port": 9, "offline_timeout_sec": offline_timeout},
+    drv = ModbusDriver({"modbus_host": "127.0.0.1", "modbus_port": 9, "offline_timeout_sec": offline_timeout,
+                       "bms_on_settle_sec": 0},
                        state, audit_log=audit_log)
     drv._client = fake if fake is not None else FakeBMS()
     return drv, state
@@ -571,7 +572,7 @@ def test_C5_wire_frames_as_sent():
     async def run():
         server = await _modbus_responder(frames)
         port = server.sockets[0].getsockname()[1]
-        drv = ModbusDriver({"modbus_host": "127.0.0.1", "modbus_port": port, "offline_timeout_sec": 5},
+        drv = ModbusDriver({"modbus_host": "127.0.0.1", "modbus_port": port, "offline_timeout_sec": 5, "bms_on_settle_sec": 0},
                            GatewayState())
         await drv.connect()
         await drv.set_power(500.0, source="t")
