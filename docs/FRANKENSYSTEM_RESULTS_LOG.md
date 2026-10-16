@@ -40,3 +40,13 @@ Event 64A3D119, discharge 3 kW. Written +3 kW to 41009, read back exact, BMS On 
 **Observation: the BMS measured -2 kW for the whole discharge against a +3 kW setpoint** (the charge measured exactly 3). Cause unknown from our side (losses / auxiliary load / rounding / delivered less than asked); engineer to say what their screen showed.
 Return to 0: 0 kW written at 12:06:14; measured 0 by 12:06:17. Charge level 56.9 to 56.6 % during the minute (the BMS's estimate looks coarse; not interpreted).
 Evidence: the same recording and audit log.
+
+## Test 7 (and 7b): Supersede, Force Idle, Release: PASS (12:08:08 to 12:11:02)
+Sequence from the dashboard (cap 5 kW, all 3 kW): charge 300 s (CDAAEA9C, 12:08:08) -> discharge 60 s with "replace overlaps" (59C342C9, 12:08:48) -> CLEAR QUEUE AND FORCE IDLE (12:09:04) -> RELEASE (12:09:24) -> charge 60 s (AE95A219, 12:10:00, ended 12:11:00).
+Supersede: the charge was cancelled by the utility side (EventStatus 2) and the discharge took authority; BMS-measured power flipped from +2 to -2 kW within about 3 s.
+Force Idle: 0 kW written and confirmed within 1 s of the click; measured 0 kW; the discharge event was cancelled mid-event (7b: power really stopped). Held for **about 19 s** (planned longer; a wait command was blocked).
+Release: control resumed (authority back to the schedule; the next event ran 3 kW and ended on time with 0 kW written and measured).
+5 writes (3, -3, 0, 3, 0 kW): all read back and confirmed; no alerts; state On / Normal throughout.
+Observation: measured power read 2 or 3 kW for a 3 kW setpoint (charge 3, then 2, then 3; discharge 2 both times): consistent with a real value near 2.5 kW in a whole-kW register (+/- 1 kW); engineer's screen may show decimals.
+Dashboard note: the Run now form resets to its defaults (500 kW, 3600 s) when the page auto-refreshes, and enforces a 60 s minimum. The test steps were therefore sent with the values set and the button pressed in one step.
+Evidence: recordings\bms_20261016_184735.csv, audit log rows 19:08 to 19:11 UTC.
