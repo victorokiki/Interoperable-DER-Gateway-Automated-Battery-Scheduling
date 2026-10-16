@@ -57,3 +57,15 @@ Event 5EE28EE3, charge 3 kW, 12:15:40 to 12:19:40. Server (utility link) stopped
 BMS-measured power continuous (2 kW for a 3 kW setpoint, as before) through the whole outage; event ended 12:19:40: 0 kW written and confirmed, AUTONOMOUS -> SAFE_IDLE the same second, measured 0 by 12:19:43.
 Restore: SAFE_IDLE -> CONNECTED at 12:21:29. The EventCompleted reply that failed (12:19:43) was retried with back-off (5 failed attempts) and delivered at 12:22:18 (HTTP 201); the failed DERStatus was resent at 12:22:20. Nothing lost.
 No BMS alerts, heartbeat never stale, no BMS link problems during the outage. Evidence: audit rows 19:15 to 19:22 UTC, recordings\bms_20261016_184735.csv.
+
+Engineer's observation on test 8 (utility link cut): the battery kept its 3 kW charge and went to 0 kW when the event ended. Their screen showed 3 kW where our register read 2 (whole-kW register).
+
+## Test 9: BMS link loss: loss detection and recovery PASS; significant finding on BMS behaviour (12:25:44 to 12:29:57)
+Event F03FF595, charge 3 kW, 12:25:44 to 12:29:44. The laptop's Ethernet cable was unplugged at about 12:26:45 (first read the BMS did not answer) and re-plugged at about 12:28:15: **about 92 s out, not the 60 s planned**.
+Detected and logged: first failed dispatch 12:27:04 (limits unreadable), "connection lost, reconnecting" 12:27:07 (22 s after the first failed read).
+After the cable was back, "reconnected after 8 attempts" at 12:28:17, but the connection then **dropped and re-formed 8 times, about every 12 s (12:28:18 to 12:29:42)**: TCP connected but the BMS did not answer (unit 255 no answer in 2 s), so the gateway could not read the BMS type and **could not write** (154 failed dispatch attempts).
+Stable at **12:29:49 (about 184 s after the cut)**: BMS type detected, **0 kW written and confirmed**, 5 s after the event ended (12:29:44). BMS-measured power 0 by 12:29:51.
+**BMS behaviour observed:** it kept charging (measured 2 kW at the first sample after reconnect, 12:29:49), i.e. **it held the last setpoint for at least about 184 s with no controller**, and showed **no alert** (alerts 0x00000000 straight after reconnect). Its single-connection control port appears to have kept the dead session for about 3 minutes, accepting but not serving new connections until that expired.
+Consequence: if the stale session outlasts an event, the gateway cannot stop the battery and it keeps its last setpoint. Recovery here was luck of timing (the session cleared just after the event end).
+Limits of the evidence: our recording is blank 12:26:45 to 12:29:47 (no link). Open, for the engineer: when their screen showed 0 kW (before or after 12:29:49); any alarm and when; the control-connection inactivity timeout; whether holding the last setpoint is intended.
+Evidence: audit rows 19:26 to 19:30 UTC; recordings\bms_20261016_184735.csv (82 rows with a note, 12:26:45 to 12:29:47).
