@@ -1079,6 +1079,13 @@ class ModbusDriver:
         self.state.operating_state_code = status["operating_state_code"]
         self.state.operating_status = status["operating_status"]
         self._note_control_mode(status["control_mode_code"])
+        # NF-03: every BMS state and health change is audited when the poll sees it. Until now only the code paths
+        # that happened to read 31000 (a command, a write's verification) did, so a Shutting Down, a Standby or a
+        # return to On during manual control or normal running left no row (found by the load and audit check).
+        self._report("operating_state", status["operating_state_code"],
+                     f"BMS operating state {status['operating_state']}", "observed")
+        self._report("operating_status", status["operating_status"],
+                     f"BMS operating status {status['operating_status']}", "observed")
         self.state.measured_kw = status["measured_kw"]
         self.state.measured_kvar = status["measured_kvar"]
         self.state.last_status_poll = asyncio.get_running_loop().time()
