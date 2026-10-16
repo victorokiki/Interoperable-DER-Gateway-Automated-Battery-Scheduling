@@ -71,3 +71,19 @@ Stop and ask the engineer whenever a reading looks odd. Never use another addres
 2. The BMS comms-lost timeout (test 9), and what they expect it to do.
 3. The answers to the two disputed items in the survey table.
 4. Permission to cut our link (test 9), and to have the battery put in Standby (test 4).
+
+---
+# Added on the day (16 Oct, after the first 10 tests): scheduled start and missed communication
+All 3 kW, 1 minute unless stated, charge. Events are created on the Schedule page ("At a set time", Pacific time) so the gateway holds them before they start.
+What the gateway should do (from `capstone/scheduler.py`): an event received before its start runs at its start time from the gateway's own copy; an event whose whole window passes without its setpoint ever being applied ends as **expired** (never started late; the utility only ever sees "Received"); an event still inside its window when the link returns starts late for the remaining time; an event first seen after it ended is **rejected as received after it had expired**.
+
+| # | Test | Steps | Expected | Evidence |
+|---|------|-------|----------|----------|
+| 12 | Scheduled start at 12:55 | Add a 3 kW charge for 12:55:00 to 12:56:00 at 12:50, then do nothing | Starts at 12:55:00 (within about 2 s), 3 kW confirmed, ends 12:56:00, 0 kW, replies Started and Completed | audit, recording |
+| 13A | Utility server down when the start passes | Event 13:00 to 13:01, received by the gateway. Stop the server before 13:00 (about 12:59); restart it after 13:02 | Runs at 13:00 on its own (AUTONOMOUS), ends 13:01, 0 kW; replies queued and delivered after restore | audit, recording |
+| 13B | Battery link down for the whole window | Event 13:08 to 13:09. At about 13:04, with the battery idle at 0 kW, unplug the cable; plug back in after 13:11 (the BMS keeps a dead session about 3 minutes) | No power at any time; the event ends **expired**; after reconnect 0 kW is written and nothing starts late | audit (modbus_link, schedule_status expired), recording (no power, blank gap) |
+| 13C | Both down for the whole window | Event 13:17 to 13:18. At about 13:13 stop the server and unplug the cable; restore the server first, then the cable, after 13:20 | As 13B; utility sees only "Received" | audit |
+| 13D | Battery link returns inside the window | Event 13:26 to 13:29 (3 min). Cable out at about 13:21 (idle), back at about 13:27 | Starts **late** after reconnect for the remaining time, ends 13:29, 0 kW | audit, recording |
+| 13E | Event first seen after it expired | Try to add an event whose start was a few minutes ago (the Schedule page may refuse it) | Rejected as received after expiry; nothing runs | audit (RejectedExpired) |
+
+Safety: in 13B and 13C the battery is at 0 kW when the link is cut (it holds 0 kW, as seen in test 9, where it held the last setpoint). 13D charges at 3 kW only after the link is back.
