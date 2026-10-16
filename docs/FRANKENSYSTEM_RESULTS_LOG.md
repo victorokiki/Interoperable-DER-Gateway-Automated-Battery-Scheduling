@@ -114,3 +114,17 @@ Event received 15:16:45. Cable out 15:23:11 (first read unanswered; "connection 
 Recording gap 15:23:11 to 15:31:11 (231 rows with a note); no alert after an 8-minute absence of a controller (alerts 0x00000000 at the first sample after reconnect); our heartbeat echo was stale (38061 against 38545) at that sample and caught up within 2 s. Peak register rate 44 per second over the recording (pacing active).
 Observation: at 15:31:12 the reliability state went CONNECTED -> DERATED and back to CONNECTED at 15:31:21 (9 s) after two failed utility polls (ClientConnectorError to localhost:5001 at 15:31:12 and 15:31:17) although the server was up; the timing matches Windows bringing the network adapter back after the cable was re-plugged (a network change can briefly disturb even localhost connections). Likely the laptop's adapter, not the utility server; not proven; no effect on the battery.
 Evidence: audit rows 22:16 to 22:33 UTC; recordings\bms_20261016_214541.csv.
+
+## Test 13C, first attempt (15:38): not valid; became test 13F
+Event 2793F99A (3 kW, 15:41 to 15:42). The Ctrl+C meant for the utility server went to the Gateway tab instead (two tabs, easy to mix up): the **gateway stopped at 15:38:49** (cleanly, final 0 kW confirmed) and the server kept running (0 failed polls). A second server was also started at 15:44 (a duplicate, stopped). The cable was cut and restored, but with the gateway not running nothing could be tested about it.
+
+## Test 13F: Gateway not running when an event's window passes: PASS (event 2793F99A)
+The gateway was down from 15:38:49 to 15:49:43 (about 11 min), which included the event window (15:41 to 15:42). The event stayed "scheduled" in the schedule database (nothing was processing it). **At the restart (15:49:43) the gateway ended it immediately as EXPIRED ("window ended without its setpoint ever being applied")**, wrote 0 kW (confirmed) and did not start anything late. The BMS was On / Normal with alerts 0x00000000 at connect: **no alert after about 11 minutes without a controller** (the last setpoint before the stop had been 0 kW).
+Evidence: audit rows 22:49:43 UTC.
+
+## Test 13C: Utility server and battery link both down through the event window: PASS (event 7D75F667, 15:56:00 to 15:57:00)
+Event received 15:50:24. Server stopped 15:52:12 (first failed poll 15:52:16: CONNECTED -> DERATED -> DISCONNECTED 15:52:26; 87 failed polls until 15:59:26). Cable out about 15:52:06 (first read unanswered), "connection lost, reconnecting" 15:52:28. Battery idle at 0 kW throughout.
+15:56:00 the event became active but its setpoint could not be written (dispatch modes unreadable). **15:57:00 status EXPIRED** ("window ended without its setpoint ever being applied"); the utility saw only EventReceived (no Started, no Completed). **No non-zero setpoint was ever written.**
+15:58:32 cable back: **reconnected after 36 attempts, stable (no flapping), 0 kW written and confirmed after 363 failed attempts**; DISCONNECTED -> SAFE_IDLE. 15:59:31 server back: SAFE_IDLE -> CONNECTED.
+Recording gap 15:52:06 to 15:58:30 (183 rows with a note); at the first sample after reconnect the BMS was On / Normal, alerts 0x00000000 (**no alert after about 6.5 minutes without a controller**), and our heartbeat echo was stale (39796 against 40184) and caught up within 2 s.
+Evidence: audit rows 22:50 to 22:59 UTC; recordings\bms_20261016_224943.csv.
