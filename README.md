@@ -59,3 +59,10 @@ Accounts are kept in your own Supabase project so they survive restarts (the hos
 2. On the server set `SUPABASE_URL` (Project Settings > API > Project URL) and `SUPABASE_SECRET_KEY` (Project Settings > API Keys > the secret key, which stays on the server).
 
 Without those two variables sign-up is switched off. Only a salted scrypt hash of each password is stored, sign-up is rate-limited per address and per day, and logins are limited to 5 failures per 15 minutes per address.
+
+## Testing against a real battery (Invinity's Frankensystem)
+
+Start read-only. `python -m capstone.bms_probe --host <BMS address>` reads the battery and prints a plain-English
+PASS / WARN / FAIL for each register; it never writes. `BMS_READ_ONLY=1` makes the gateway itself refuse every
+write to the BMS. Settings: `deploy/frankensystem.env.example` (copy to `deploy/frankensystem.env`), launcher:
+`deploy/run_frankensystem.ps1 check|gateway`, and a printable checklist: `docs/FRANKENSYSTEM_TEST_DAY.md`.

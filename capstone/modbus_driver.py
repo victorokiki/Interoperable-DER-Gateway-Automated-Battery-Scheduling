@@ -247,6 +247,18 @@ def _follows(measured_kw, setpoint_kw) -> bool:
     return measured_kw != 0 and (measured_kw > 0) == (setpoint_kw > 0)
 
 
+class ReadOnlyError(RuntimeError):
+    """A write was attempted while BMS_READ_ONLY is on."""
+
+
+async def _refuse_write(*args, **kwargs):
+    log.warning("BMS_READ_ONLY is on: a register write was refused and nothing was sent to the BMS")
+    raise ReadOnlyError("BMS_READ_ONLY is on: nothing is written to the BMS")
+
+
+_refuse_write._register_metered = True   # a refused write is not a register access
+
+
 class ModbusDriver:
     def __init__(self, config: dict, state: GatewayState, audit_log=None, event_bus=None):
         self.host   = config["modbus_host"]
@@ -261,6 +273,8 @@ class ModbusDriver:
         # E1: may the gateway command a BMS it finds Off at a take-over out of Off?
         self.start_from_off = config.get("bms_start_from_off", True)
         self.register_meter = RegisterMeter()
+        # BMS_READ_ONLY: look but never touch. Every write is refused before it leaves the gateway.
+        self.read_only = bool(config.get("bms_read_only", False))
         self._client = AsyncModbusTcpClient(host=self.host, port=self.port)
         self._lock   = asyncio.Lock()   # prevent concurrent writes
         self._bms_type = None           # populated on connect(): BMS_TYPE_DC / BMS_TYPE_AC
@@ -310,7 +324,13 @@ class ModbusDriver:
         """Every client assigned here (the real one, or a test's fake) has its
         read and write methods counted by register_meter, and a request for
         more than MAX_REGISTERS_PER_REQUEST registers refused before it is
-        sent (the BMS would answer exception 03)."""
+        sent (the BMS would answer exception 03). In read-only mode the write
+        methods are replaced by ones that refuse, so no register is ever
+        written, whatever asks (heartbeat echo, commands, setpoints)."""
+        if self.read_only:
+            for name in ("write_registers", "write_register", "write_coil", "write_coils"):
+                if getattr(client, name, None) is not None:
+                    setattr(client, name, _refuse_write)
         for name in ("read_input_registers", "read_holding_registers", "write_registers", "write_register"):
             method = getattr(client, name, None)
             if method is not None and not getattr(method, "_register_metered", False):

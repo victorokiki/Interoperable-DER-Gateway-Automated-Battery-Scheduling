@@ -111,6 +111,9 @@ def load_config() -> dict:
         # start-up, a reconnection, a BMS restart, an operator handing back
         # control)? An Off that appears while it runs is never overridden.
         "bms_start_from_off":    _yes_no("BMS_START_FROM_OFF", "1"),
+        # Look but never touch: the gateway reads the BMS and refuses every write
+        # to it. Use it for a first connection to real hardware.
+        "bms_read_only":         _yes_no("BMS_READ_ONLY", "0"),
         # NF-04: TLS 1.2+ mutual cert auth for IEEE 2030.5 — all three
         # optional; leave unset to keep talking plain HTTP to the local
         # simulator. See certs/generate_dev_certs.sh for dev certs.
@@ -178,6 +181,8 @@ def print_banner(config: dict):
     print(f"  Offline timeout    : {config['offline_timeout_sec']}s")
     print(f"  Modbus battery     : {config['modbus_host']}:{config['modbus_port']} (unit ID "
           f"{config['modbus_unit_id']}, then 1 and 0 if it does not answer)")
+    if config["bms_read_only"]:
+        print("  BMS access         : READ-ONLY (BMS_READ_ONLY=1) - nothing is written to the BMS")
     print(f"  BMS found Off      : " + ("started when the gateway takes over" if config["bms_start_from_off"]
                                          else "left Off (BMS_START_FROM_OFF=0)"))
     print(f"  Utility transport  : {config['transport']}")
