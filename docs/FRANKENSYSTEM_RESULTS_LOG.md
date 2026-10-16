@@ -50,3 +50,10 @@ Release: control resumed (authority back to the schedule; the next event ran 3 k
 Observation: measured power read 2 or 3 kW for a 3 kW setpoint (charge 3, then 2, then 3; discharge 2 both times): consistent with a real value near 2.5 kW in a whole-kW register (+/- 1 kW); engineer's screen may show decimals.
 Dashboard note: the Run now form resets to its defaults (500 kW, 3600 s) when the page auto-refreshes, and enforces a 60 s minimum. The test steps were therefore sent with the values set and the button pressed in one step.
 Evidence: recordings\bms_20261016_184735.csv, audit log rows 19:08 to 19:11 UTC.
+
+## Test 8: Utility link loss: PASS (12:15:44 to 12:22:20)
+Event 5EE28EE3, charge 3 kW, 12:15:40 to 12:19:40. Server (utility link) stopped at about 12:16:30 and restarted at about 12:21:25.
+12:16:35 CONNECTED -> DERATED (first failed poll); 12:16:45 DERATED -> AUTONOMOUS (running the approved event unaided). 59 failed polls while down.
+BMS-measured power continuous (2 kW for a 3 kW setpoint, as before) through the whole outage; event ended 12:19:40: 0 kW written and confirmed, AUTONOMOUS -> SAFE_IDLE the same second, measured 0 by 12:19:43.
+Restore: SAFE_IDLE -> CONNECTED at 12:21:29. The EventCompleted reply that failed (12:19:43) was retried with back-off (5 failed attempts) and delivered at 12:22:18 (HTTP 201); the failed DERStatus was resent at 12:22:20. Nothing lost.
+No BMS alerts, heartbeat never stale, no BMS link problems during the outage. Evidence: audit rows 19:15 to 19:22 UTC, recordings\bms_20261016_184735.csv.
