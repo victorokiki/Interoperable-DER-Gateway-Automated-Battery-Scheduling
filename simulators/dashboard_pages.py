@@ -425,6 +425,27 @@ function cssv(n) { return getComputedStyle(document.documentElement).getProperty
 const TZ = 'America/Vancouver';
 function clock(ts) { return ts ? new Intl.DateTimeFormat('en-US', {timeZone: TZ, hour: 'numeric', minute: '2-digit', second: '2-digit'}).format(new Date(ts * 1000)) : '—'; }
 function dateTime(ts) { return ts ? new Intl.DateTimeFormat('en-US', {timeZone: TZ, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}).format(new Date(ts * 1000)) : '—'; }
+function dayOf(ts) {
+  const o = {};
+  new Intl.DateTimeFormat('en-US', {timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit'}).formatToParts(new Date(ts * 1000)).forEach(function (p) { o[p.type] = p.value; });
+  return o.year + '-' + o.month + '-' + o.day;
+}
+// How long, in words: 100 s, 5 min, 90 min is "1 h 30 min", 60 hours is "2 days 12 h".
+function lengthText(sec) {
+  sec = Math.round(Number(sec));
+  if (!Number.isFinite(sec) || sec < 0) return '—';
+  if (sec < 120) return sec + ' s';
+  const mins = Math.round(sec / 60), d = Math.floor(mins / 1440), h = Math.floor((mins % 1440) / 60), m = mins % 60;
+  if (d > 0) return d + (d === 1 ? ' day' : ' days') + (h ? ' ' + h + ' h' : '') + (m ? ' ' + m + ' min' : '');
+  if (h > 0) return h + ' h' + (m ? ' ' + m + ' min' : '');
+  return m + ' min';
+}
+// The two ends of an event, with the date on the end whenever it is not the same day as the start.
+function rangeParts(start, end) {
+  if (!start) return ['—', '']; if (!end) return [dateTime(start), ''];
+  return [dateTime(start), dayOf(start) === dayOf(end - 1) ? clock(end) : dateTime(end)];
+}
+function rangeText(start, end) { const r = rangeParts(start, end); return r[1] ? r[0] + ' to ' + r[1] : r[0]; }
 function fmtT(text) { return String(text).replace(/@@t=(\\d+)@@/g, function (m, s) { return dateTime(Number(s)); }); }
 function tickPT() {
   const el = document.getElementById('pt-clock');
@@ -441,7 +462,7 @@ function queueTable(events, acks) {
   return '<table><tr><th>Event ID</th><th>What</th><th>When</th><th>Status</th><th>Told</th>' + (CAN_CONTROL ? '<th></th>' : '') + '</tr>' + events.map(function (e) {
     const kind = e.power_kw >= 0 ? '<span class="tag charge">CHARGE</span>' : '<span class="tag discharge">DISCHARGE</span>';
     const ack = acks && acks[e.mrid] ? '<span class="ack-yes">Yes</span>' : '<span class="ack-no">Pending</span>';
-    return '<tr><td class="id">' + esc(e.mrid) + '</td><td>' + kind + ' ' + Math.abs(e.power_kw).toFixed(0) + ' kW</td><td>' + esc(dateTime(e.start)) + '<br>to ' + esc(dateTime(e.end)) +
+    return '<tr><td class="id">' + esc(e.mrid) + '</td><td>' + kind + ' ' + Math.abs(e.power_kw).toFixed(0) + ' kW<br><span class="stat-hint">' + esc(lengthText(e.end - e.start)) + '</span></td><td>' + esc(rangeParts(e.start, e.end)[0]) + '<br>to ' + esc(rangeParts(e.start, e.end)[1]) +
            '</td><td>' + (e.running ? '<b class="sev-ok">Running now</b>' : 'Waiting to start') + '</td><td title="Has the utility been told this event was received?">' + ack +
            '</td>' + (CAN_CONTROL ? '<td><button class="btn grey" type="button" data-cancel="' + esc(e.mrid) + '">Cancel</button></td>' : '') + '</tr>';
   }).join('') + '</table>';
@@ -877,7 +898,7 @@ async function loadEvents() {
       '<table><tr><th>Event ID</th><th>What it asks for</th><th>Starts</th><th>Length</th><th>Status</th><th>Utility told</th><th></th></tr>' +
       d.events.map(function (e, i) {
         const note = e.replaced_by ? 'Newer event: ' + e.replaced_by : e.reason;
-        return '<tr><td class="id" title="mRID">' + esc(e.mrid) + '</td><td>' + esc(e.what) + '</td><td>' + esc(dateTime(e.start)) + '</td><td>' + esc(Math.round(e.duration / 60 * 10) / 10) + ' min</td>' +
+        return '<tr><td class="id" title="mRID">' + esc(e.mrid) + '</td><td>' + esc(e.what) + '</td><td>' + esc(dateTime(e.start)) + '</td><td>' + esc(lengthText(e.duration)) + '</td>' +
           '<td>' + esc(e.status) + (note ? '<div class="stat-hint">' + esc(note) + '</div>' : '') + '</td><td class="sev-' + esc(e.told_tone) + '">' + esc(e.told) + '</td>' +
           '<td><button class="btn grey" type="button" data-i="' + i + '">Show history</button></td></tr><tr id="trail-' + i + '" hidden><td colspan="7" class="trail"></td></tr>';
       }).join('') + '</table>';
@@ -1000,7 +1021,7 @@ SUMMARY_JS = """
     t('Undelivered replies', c.undelivered, 'still waiting for the utility', c.undelivered ? 'warn' : 'ok');
   document.getElementById('events').innerHTML = d.events.length === 0 ? '<p class="empty">No events in this period.</p>' :
     '<table><tr><th>Event ID</th><th>What it asked for</th><th>Starts</th><th>Length</th><th>Status</th><th>Utility told</th></tr>' + d.events.map(function (e) {
-      return '<tr><td class="id">' + esc(e.mrid) + '</td><td>' + esc(e.what) + '</td><td>' + esc(dateTime(e.start)) + '</td><td>' + esc(Math.round(e.duration / 60 * 10) / 10) + ' min</td><td>' + esc(e.status) + '</td><td>' + esc(e.told) + '</td></tr>';
+      return '<tr><td class="id">' + esc(e.mrid) + '</td><td>' + esc(e.what) + '</td><td>' + esc(dateTime(e.start)) + '</td><td>' + esc(lengthText(e.duration)) + '</td><td>' + esc(e.status) + '</td><td>' + esc(e.told) + '</td></tr>';
     }).join('') + '</table>';
   document.getElementById('groups').innerHTML = d.groups.length === 0 ? '<p class="empty">No problems recorded in this period.</p>' :
     '<table><tr><th>What happened</th><th>Times</th><th>Last seen</th><th>What the gateway did</th></tr>' + d.groups.map(function (g) {
@@ -1031,6 +1052,7 @@ SCHEDULE_CSS = """
   .chip { font-size: 10px; padding: 1px 4px; margin-top: 3px; border-left: 3px solid var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .chip.charge { border-color: var(--green); background: var(--ok-bg); }
   .chip.discharge { border-color: var(--dis); background: var(--dis-bg); }
+  .chip.span { font-weight: 700; }
   .chip.past { opacity: 0.6; } .chip.more { border-color: transparent; color: var(--faint); }
   .formgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
   .formgrid label { grid-column: auto; }
@@ -1149,29 +1171,50 @@ function draw() {
   $('queue').innerHTML = queueTable(queue, acks);
   drawCalendar(); drawDay();
 }
-function chipFor(e) {
-  const kind = e.kw >= 0 ? 'charge' : 'discharge', past = e.end * 1000 < Date.now();
-  return '<div class="chip ' + kind + (past ? ' past' : '') + '" title="' + esc((e.kw >= 0 ? 'Charge ' : 'Discharge ') + Math.abs(Math.round(e.kw)) + ' kW, ' + e.mrid + ': ' + e.status) + '">' + esc(shortTime(e.start).replace(' AM', 'a').replace(' PM', 'p')) + '</div>';
+function chipFor(e, role) {
+  const kind = e.kw >= 0 ? 'charge' : 'discharge', past = e.end * 1000 < Date.now(), small = function (ts) { return shortTime(ts).replace(' AM', 'a').replace(' PM', 'p'); };
+  const label = role === 'mid' ? 'all day' : role === 'end' ? '→ ' + small(e.end) : role === 'start' ? small(e.start) + ' →' : small(e.start);
+  const whole = role && role !== 'only' ? ' (whole event: ' + fullTime(e.start) + ' to ' + fullTime(e.end) + ', ' + lengthText(e.end - e.start) + ')' : '';
+  return '<div class="chip ' + kind + (past ? ' past' : '') + (role && role !== 'only' ? ' span' : '') + '" title="' + esc((e.kw >= 0 ? 'Charge ' : 'Discharge ') + Math.abs(Math.round(e.kw)) + ' kW, ' + e.mrid + ': ' + e.status + whole) + '">' + esc(label) + '</div>';
+}
+function nextDay(key) {
+  const d = new Date(Date.UTC(+key.slice(0, 4), +key.slice(5, 7) - 1, +key.slice(8, 10) + 1));
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
+}
+// Every Pacific day an event touches, from the day it starts to the day it ends.
+function daysOf(e) {
+  const last = dayKey(Math.max(e.start, e.end - 1)), keys = [dayKey(e.start)];
+  let k = keys[0], guard = 0;
+  while (k !== last && guard++ < 800) { k = nextDay(k); keys.push(k); }
+  return keys;
 }
 function drawCalendar() {
   const first = new Date(Date.UTC(view.y, view.m, 1)), lead = first.getUTCDay(), days = new Date(Date.UTC(view.y, view.m + 1, 0)).getUTCDate();
   $('month-title').textContent = new Intl.DateTimeFormat('en-US', {timeZone: 'UTC', month: 'long', year: 'numeric'}).format(first);
-  const byDay = {}; events.forEach(function (e) { (byDay[dayKey(e.start)] = byDay[dayKey(e.start)] || []).push(e); });
+  const byDay = {};
+  events.forEach(function (e) {
+    const ds = daysOf(e);
+    ds.forEach(function (k, i) { (byDay[k] = byDay[k] || []).push({e: e, role: ds.length === 1 ? 'only' : i === 0 ? 'start' : i === ds.length - 1 ? 'end' : 'mid'}); });
+  });
   let h = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(function (d) { return '<div class="dow">' + d + '</div>'; }).join('');
   for (let i = 0; i < lead; i++) h += '<div class="day blank"></div>';
   for (let d = 1; d <= days; d++) {
     const key = view.y + '-' + String(view.m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0'), list = byDay[key] || [];
     h += '<div class="day' + (key === today ? ' today' : '') + (key === selected ? ' sel' : '') + '" data-day="' + key + '"><div class="n">' + d + '</div>' +
-      list.slice(0, 3).map(chipFor).join('') + (list.length > 3 ? '<div class="chip more" title="' + (list.length - 3) + ' more events on this day. Click the day to see them.">+' + (list.length - 3) + '</div>' : '') + '</div>';
+      list.slice(0, 3).map(function (x) { return chipFor(x.e, x.role); }).join('') + (list.length > 3 ? '<div class="chip more" title="' + (list.length - 3) + ' more events on this day. Click the day to see them.">+' + (list.length - 3) + '</div>' : '') + '</div>';
   }
   $('cal').innerHTML = h;
 }
 function drawDay() {
   $('day-title').textContent = 'Events on ' + dayName(selected);
-  const list = events.filter(function (e) { return dayKey(e.start) === selected; });
+  const list = events.filter(function (e) { return daysOf(e).indexOf(selected) >= 0; });
   $('day-list').innerHTML = list.length === 0 ? '<p class="empty">Nothing planned for this day.</p>' :
-    '<table><tr><th>Time (Pacific)</th><th>What</th><th>Status</th><th>Event ID</th></tr>' + list.map(function (e) {
-      return '<tr><td>' + esc(shortTime(e.start)) + ' to ' + esc(shortTime(e.end)) + '</td><td>' + (e.kw >= 0 ? 'Charge ' : 'Discharge ') + esc(Math.abs(Math.round(e.kw))) + ' kW</td><td>' + esc(e.status) + '</td><td class="id">' + esc(e.mrid) + '</td></tr>';
+    '<table><tr><th>Time (Pacific)</th><th>What</th><th>Length</th><th>Status</th><th>Event ID</th></tr>' + list.map(function (e) {
+      const ds = daysOf(e), i = ds.indexOf(selected);
+      const when = ds.length === 1 ? esc(shortTime(e.start)) + ' to ' + esc(shortTime(e.end))
+        : (i === 0 ? 'From ' + esc(shortTime(e.start)) + ' until the end of the day' : i === ds.length - 1 ? 'From the start of the day until ' + esc(shortTime(e.end)) : 'All day') +
+          '<br><span class="stat-hint">Whole event: ' + esc(fullTime(e.start)) + ' to ' + esc(fullTime(e.end)) + '</span>';
+      return '<tr><td>' + when + '</td><td>' + (e.kw >= 0 ? 'Charge ' : 'Discharge ') + esc(Math.abs(Math.round(e.kw))) + ' kW</td><td>' + esc(lengthText(e.end - e.start)) + '</td><td>' + esc(e.status) + '</td><td class="id">' + esc(e.mrid) + '</td></tr>';
     }).join('') + '</table>';
 }
 function pick(key) { selected = key; $('f-date').value = key; drawCalendar(); drawDay(); preview(); }
@@ -1193,7 +1236,7 @@ function formRow() {
 function preview() {
   const f = formRow();
   if (f.error && !$('f-kw').value && !$('f-len').value) { $('f-preview').textContent = 'Fill in the power and the length, and this line will say exactly what will be added.'; return; }
-  $('f-preview').textContent = f.error ? f.error : (f.kw > 0 ? 'Charge ' : 'Discharge ') + Math.abs(f.kw) + ' kW from ' + fullTime(f.start) + ', for ' + (f.len >= 3600 && f.len % 3600 === 0 ? f.len / 3600 + ' h' : Math.round(f.len / 60) + ' min') + ', ending at ' + shortTime(f.start + f.len) + '.';
+  $('f-preview').textContent = f.error ? f.error : (f.kw > 0 ? 'Charge ' : 'Discharge ') + Math.abs(f.kw) + ' kW from ' + fullTime(f.start) + ', for ' + lengthText(f.len) + (f.len >= 86400 ? ' (' + Math.round(f.len / 360) / 10 + ' h)' : '') + ', ending ' + (dayKey(f.start) === dayKey(f.start + f.len - 1) ? 'at ' + shortTime(f.start + f.len) : fullTime(f.start + f.len)) + '.';
 }
 ['f-dir', 'f-kw', 'f-date', 'f-time', 'f-len', 'f-unit'].forEach(function (id) { $(id).addEventListener('input', preview); });
 document.querySelectorAll('input[name=when]').forEach(function (r) { r.addEventListener('change', function () { const now = r.value === 'now' && r.checked; $('f-date').disabled = now; $('f-time').disabled = now; preview(); }); });
@@ -1401,7 +1444,7 @@ async function loadOverview() {
     ev.innerHTML = d.recent_events.length === 0 ? '<p class="empty">No events received from the utility yet.</p>' :
       '<table><tr><th>Event ID</th><th>What it asks for</th><th>Window</th><th>Status</th><th>Utility told</th></tr>' +
       d.recent_events.map(function (e) {
-        return '<tr><td class="id" title="mRID, the utility\\'s reference for this event">' + esc(e.mrid) + '</td><td>' + esc(e.what) + '</td><td>' + esc(dateTime(e.start)) + ' to ' + esc(clock(e.end)) +
+        return '<tr><td class="id" title="mRID, the utility\\'s reference for this event">' + esc(e.mrid) + '</td><td>' + esc(e.what) + '</td><td>' + esc(rangeText(e.start, e.end)) +
                '</td><td>' + esc(e.status) + '</td><td class="sev-' + esc(e.told_tone) + '">' + esc(e.told) + '</td></tr>';
       }).join('') + '</table>';
     document.getElementById('activity').innerHTML = d.activity.length === 0 ? '<p class="empty">Nothing recorded yet.</p>' : d.activity.map(activityRow).join('');
