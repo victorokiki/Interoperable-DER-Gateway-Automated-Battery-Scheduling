@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def load(monkeypatch, tmp_path, limits=None):
+def load(monkeypatch, tmp_path, limits=None, soc=50.0):
     monkeypatch.setenv("DASHBOARD_PASSWORD", "operator-test-password")
     monkeypatch.setenv("DASHBOARD_SECRET_KEY", "test-secret-key")
     monkeypatch.setenv("PUBLIC_MODE", "0")
@@ -32,7 +32,7 @@ def load(monkeypatch, tmp_path, limits=None):
         from capstone.state import GatewayState
         state = GatewayState()
         state.limits_kw = {"max_charge_kw": limits[0], "max_discharge_kw": limits[1]}
-        state.soc_pct = 50.0
+        state.soc_pct = soc
         state.last_status_poll_at = __import__("time").time()
         status.write_text(json.dumps(main_mod.status_snapshot(state, ReliabilityManager({"offline_timeout_sec": 30}, state))))
     monkeypatch.setattr(module, "BATTERY_STATUS_FILE", status)
@@ -116,3 +116,19 @@ def test_when_the_battery_accepts_nothing_the_limit_check_does_not_block_a_reque
     client = operator(grid)
     client.post("/dashboard/send", data={"action": "charge", "power_kw": "30", "duration_sec": "120"})
     assert len(grid.active_events) == 1
+
+
+def test_the_overview_tile_shows_the_charge_level_with_two_decimals(monkeypatch, tmp_path):
+    client = operator(load(monkeypatch, tmp_path, limits=(50, 50), soc=54.7))
+    tiles = {t["label"]: t["value"] for t in client.get("/api/overview").get_json()["tiles"]}
+    assert tiles["Charge level"] == "54.70%"
+
+
+def test_a_fractional_kilowatt_is_not_rounded_in_the_words(monkeypatch, tmp_path):
+    from capstone import __main__  # noqa: F401  (keeps the import path the same as the other tests)
+    pages = importlib.util.spec_from_file_location("pages_under_test", ROOT / "simulators" / "dashboard_pages.py")
+    module = importlib.util.module_from_spec(pages)
+    sys.modules[pages.name] = module
+    pages.loader.exec_module(module)
+    assert module._num(2.5) == "2.5" and module._num(3) == "3" and module._num(2.456) == "2.46" and module._num(0) == "0"
+    assert module._kw(2.5) == "charge 2.5 kW" and module._kw(-3) == "discharge 3 kW" and module._kw(0) == "idle (0 kW)"

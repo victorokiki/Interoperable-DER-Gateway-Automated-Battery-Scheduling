@@ -93,11 +93,16 @@ def _ago_text(sec: float) -> str:
     return f"{sec}s ago" if sec < 120 else f"{round(sec / 60)} min ago" if sec < 7200 else f"{round(sec / 3600)} h ago"
 
 
+def _num(v) -> str:
+    """A number with up to 2 decimals and no trailing zeros: 3 -> 3, 2.5 -> 2.5, 2.456 -> 2.46."""
+    return f"{float(v):.2f}".rstrip("0").rstrip(".") or "0"
+
+
 def _kw(v) -> str:
     v = float(v)
     if v == 0:
         return "idle (0 kW)"
-    return f"{'charge' if v > 0 else 'discharge'} {abs(v):g} kW"
+    return f"{'charge' if v > 0 else 'discharge'} {_num(abs(v))} kW"
 
 
 def _severity(outcome: str) -> str:
@@ -296,8 +301,8 @@ def _tiles(state: dict, now: float) -> tuple[list, int]:
         v = b.get("verified_kw")
         battery = (("Unconfirmed", "Battery has not confirmed its setting", "bad") if v is None else
                    ("Idle", "Not charging or discharging", "ok") if v == 0 else
-                   ("Charging", f"{abs(v):g} kW going in", "ok") if v > 0 else
-                   ("Discharging", f"{abs(v):g} kW going out", "ok"))
+                   ("Charging", f"{_num(abs(v))} kW going in", "ok") if v > 0 else
+                   ("Discharging", f"{_num(abs(v))} kW going out", "ok"))
     soc = b.get("soc_pct") if b.get("available") else None
     secs = state.get("seconds_since_poll")
     auth = (b.get("authority") or {}) if b.get("available") else {}
@@ -315,7 +320,7 @@ def _tiles(state: dict, now: float) -> tuple[list, int]:
     tiles = [
         {"label": "Battery now", "value": battery[0], "sub": battery[1], "tone": battery[2]},
         {"label": "Who is in control", "value": control[0], "sub": control[1], "tone": control[2]},
-        {"label": "Charge level", "value": "Unknown" if soc is None else f"{soc:.1f}%", "sub": "of battery capacity",
+        {"label": "Charge level", "value": "Unknown" if soc is None else f"{soc:.2f}%", "sub": "of battery capacity",
          "tone": "warn" if soc is None else "bad" if soc < 15 else "warn" if soc < 25 else "ok"},
         {"label": "Utility link", "value": "Connected" if state.get("gateway_connected") else "Lost",
          "sub": "No contact yet" if secs is None else f"Last check-in {secs}s ago", "tone": "ok" if state.get("gateway_connected") else "bad"},
@@ -425,6 +430,8 @@ function cssv(n) { return getComputedStyle(document.documentElement).getProperty
 const TZ = 'America/Vancouver';
 function clock(ts) { return ts ? new Intl.DateTimeFormat('en-US', {timeZone: TZ, hour: 'numeric', minute: '2-digit', second: '2-digit'}).format(new Date(ts * 1000)) : '—'; }
 function dateTime(ts) { return ts ? new Intl.DateTimeFormat('en-US', {timeZone: TZ, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}).format(new Date(ts * 1000)) : '—'; }
+// A number with up to 2 decimals and no trailing zeros (3, 2.5, 2.46).
+function numText(n) { const x = Math.round(Number(n) * 100) / 100; return Number.isFinite(x) ? String(x) : '—'; }
 function dayOf(ts) {
   const o = {};
   new Intl.DateTimeFormat('en-US', {timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit'}).formatToParts(new Date(ts * 1000)).forEach(function (p) { o[p.type] = p.value; });
@@ -462,7 +469,7 @@ function queueTable(events, acks) {
   return '<table><tr><th>Event ID</th><th>What</th><th>When</th><th>Status</th><th>Told</th>' + (CAN_CONTROL ? '<th></th>' : '') + '</tr>' + events.map(function (e) {
     const kind = e.power_kw >= 0 ? '<span class="tag charge">CHARGE</span>' : '<span class="tag discharge">DISCHARGE</span>';
     const ack = acks && acks[e.mrid] ? '<span class="ack-yes">Yes</span>' : '<span class="ack-no">Pending</span>';
-    return '<tr><td class="id">' + esc(e.mrid) + '</td><td>' + kind + ' ' + Math.abs(e.power_kw).toFixed(0) + ' kW<br><span class="stat-hint">' + esc(lengthText(e.end - e.start)) + '</span></td><td>' + esc(rangeParts(e.start, e.end)[0]) + '<br>to ' + esc(rangeParts(e.start, e.end)[1]) +
+    return '<tr><td class="id">' + esc(e.mrid) + '</td><td>' + kind + ' ' + numText(Math.abs(e.power_kw)) + ' kW<br><span class="stat-hint">' + esc(lengthText(e.end - e.start)) + '</span></td><td>' + esc(rangeParts(e.start, e.end)[0]) + '<br>to ' + esc(rangeParts(e.start, e.end)[1]) +
            '</td><td>' + (e.running ? '<b class="sev-ok">Running now</b>' : 'Waiting to start') + '</td><td title="Has the utility been told this event was received?">' + ack +
            '</td>' + (CAN_CONTROL ? '<td><button class="btn grey" type="button" data-cancel="' + esc(e.mrid) + '">Cancel</button></td>' : '') + '</tr>';
   }).join('') + '</table>';
@@ -811,7 +818,7 @@ BATTERY_JS = """
 function kwWords(v) {
   if (v === null || v === undefined) return '—';
   const n = Number(v);
-  return n === 0 ? 'Idle (0 kW)' : (n > 0 ? 'Charging ' : 'Discharging ') + Math.abs(n).toFixed(Number.isInteger(n) ? 0 : 1) + ' kW';
+  return n === 0 ? 'Idle (0 kW)' : (n > 0 ? 'Charging ' : 'Discharging ') + numText(Math.abs(n)) + ' kW';
 }
 async function loadBattery() {
   try {
@@ -829,7 +836,7 @@ async function loadBattery() {
     if (b && b.available) {
       const a = b.authority || {}, soc = b.soc_pct;
       document.getElementById('now').innerHTML =
-        '<div class="stat-label">Charge level</div><div class="bignum">' + (soc === null || soc === undefined ? '—' : soc.toFixed(1) + '%') + '</div>' +
+        '<div class="stat-label">Charge level</div><div class="bignum">' + (soc === null || soc === undefined ? '—' : soc.toFixed(2) + '%') + '</div>' +
         '<div class="soc-bar-outer" style="margin-bottom:18px"><div class="soc-bar-inner" style="width:' + Math.max(0, Math.min(100, soc || 0)) + '%"></div></div>' +
         '<div class="stat-label">What the battery is doing</div><div class="stat-value">' + esc(kwWords(b.verified_kw)) + '</div>' +
         '<p class="meta">Who is in control: ' + esc(d.control) + '</p>';
@@ -1453,7 +1460,7 @@ async function loadOverview() {
 function kwText(v) {
   if (v === null || v === undefined) return '—';
   const n = Number(v);
-  const size = Number.isInteger(n) ? Math.abs(n).toFixed(0) : String(Math.round(Math.abs(n) * 1000) / 1000);
+  const size = numText(Math.abs(n));
   return size + ' kW ' + (n > 0 ? 'charge' : (n < 0 ? 'discharge' : 'idle'));
 }
 async function loadStatus() {
@@ -1493,7 +1500,7 @@ async function loadStatus() {
           '<div title="What the battery controller (BMS) confirmed it is holding"><div class="stat-label">Battery confirms</div><div class="stat-value">' + kwText(verified) + '</div>' +
             '<span class="mode-badge ' + modeClass + '">' + modeText + '</span></div>' +
           '<div title="Power actually measured flowing through the battery"><div class="stat-label">Actually flowing' + staleTag + '</div><div class="stat-value">' + kwText(b.measured_kw) + '</div></div>' +
-          '<div><div class="stat-label">Charge level' + staleTag + '</div><div class="stat-value">' + (socKnown ? b.soc_pct.toFixed(1) + '%' : '—') + '</div>' +
+          '<div><div class="stat-label">Charge level' + staleTag + '</div><div class="stat-value">' + (socKnown ? b.soc_pct.toFixed(2) + '%' : '—') + '</div>' +
             '<div class="soc-bar-outer"><div class="soc-bar-inner" style="width:' + socPct + '%"></div></div></div>' +
           '<div><div class="stat-label">Reliability</div><span class="rel-badge ' + esc(relClass) + '">' + esc(b.reliability_state || 'UNKNOWN') + '</span></div>' +
         '</div>' + notes +

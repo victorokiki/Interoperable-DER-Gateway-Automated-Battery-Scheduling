@@ -43,15 +43,17 @@ def _function(source: str, name: str) -> str:
 def run_js(expression: str):
     pages = _pages()
     common, schedule = pages.COMMON_JS.replace("\\\\", "\\"), pages.SCHEDULE_JS.replace("\\\\", "\\")
+    overview, battery = pages.OVERVIEW_JS.replace("\\\\", "\\"), pages.BATTERY_JS.replace("\\\\", "\\")
     parts_line = next(line for line in schedule.splitlines() if line.startswith("const parts ="))
     script = "\n".join([
         "const TZ = 'America/Vancouver';",
-        *(_function(common, n) for n in ("clock", "dateTime", "dayOf", "lengthText", "rangeParts", "rangeText")),
+        *(_function(common, n) for n in ("clock", "dateTime", "numText", "dayOf", "lengthText", "rangeParts", "rangeText")),
+        _function(overview, "kwText"), _function(battery, "kwWords"),
         parts_line,
         *(_function(schedule, n) for n in ("dayKey", "nextDay", "daysOf")),
         f"console.log(JSON.stringify({expression}));",
     ])
-    result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30)
+    result = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 
@@ -103,3 +105,19 @@ def test_days_follow_the_pacific_clock_across_the_end_of_daylight_saving():
     start = epoch("2026-11-01T06:00:00Z")               # 23:00 PDT on 31 October
     days = run_js(f"daysOf({{start: {start}, end: {start + 27 * 3600}}})")
     assert days == ["2026-10-31", "2026-11-01", "2026-11-02"]
+
+
+def test_numbers_have_up_to_two_decimals_and_no_trailing_zeros():
+    assert run_js("[3, 2.5, 2.456, 25.0, 0.004, 0, 1234.5].map(numText)") == ["3", "2.5", "2.46", "25", "0", "0", "1234.5"]
+
+
+def test_power_words_do_not_round_a_fractional_kilowatt_to_a_whole_one():
+    """The queue table used toFixed(0): a 2.5 kW event read '3 kW'."""
+    assert run_js("[2.5, -3, 0, null].map(kwText)") == ["2.5 kW charge", "3 kW discharge", "0 kW idle", "\u2014"]
+    assert run_js("[2.5, -3, 0, 0.25].map(kwWords)") == ["Charging 2.5 kW", "Discharging 3 kW", "Idle (0 kW)", "Charging 0.25 kW"]
+
+
+def test_the_charge_level_is_shown_with_two_decimals_everywhere():
+    source = (ROOT / "simulators" / "dashboard_pages.py").read_text(encoding="utf-8")
+    assert "soc.toFixed(1)" not in source and "soc_pct.toFixed(1)" not in source and "soc:.1f" not in source
+    assert source.count("toFixed(2) + '%'") == 2 and 'f"{soc:.2f}%"' in source
