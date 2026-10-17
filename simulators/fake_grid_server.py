@@ -1248,13 +1248,27 @@ def dashboard_send():
         session["flash"] = ["ok", "Force Idle released. The battery will follow the utility schedule again within a few seconds."]
         return redirect(_back_to_page())
 
+    if not request.form.get("power_kw", "").strip():
+        session["flash"] = ["warn", "Not sent. Type how much power first (a whole number of kW, for example 25)."]
+        return redirect(_back_to_page())
+    if not request.form.get("duration_sec", "").strip():
+        session["flash"] = ["warn", "Not sent. Type how long it should run, in seconds (60 or more; 120 is 2 minutes)."]
+        return redirect(_back_to_page())
     try:
-        power_kw = _finite_number(request.form.get("power_kw", 0), "power_kw")
-        duration = _whole_number(request.form.get("duration_sec", 3600), "duration_sec")
+        power_kw = _finite_number(request.form.get("power_kw"), "power_kw")
+        duration = _whole_number(request.form.get("duration_sec"), "duration_sec")
         signed_power = abs(power_kw) if action == "charge" else -abs(power_kw)
         _control_xml(signed_power)
     except ValueError as e:
         return f"Invalid command: {e}", 400
+    # What the battery accepts right now (the gateway's own ceiling and the BMS limits, from its status): ask for
+    # more and the gateway would only hold it down, so say so here instead of queueing something that cannot run.
+    limits = ((_dashboard_state().get("battery") or {}).get("limits_kw") or {})
+    limit = limits.get("max_charge_kw" if action == "charge" else "max_discharge_kw")
+    if isinstance(limit, (int, float)) and limit > 0 and abs(power_kw) > limit:
+        session["flash"] = ["warn", f"Not sent. The battery accepts up to {limit:g} kW {'charging' if action == 'charge' else 'discharging'} "
+                                    f"right now, and you asked for {abs(power_kw):g} kW. Type {limit:g} or less."]
+        return redirect(_back_to_page())
 
     result = _schedule([{"power_kw": signed_power, "start": None, "duration_sec": duration}],
                        replace=request.form.get("replace") == "1")

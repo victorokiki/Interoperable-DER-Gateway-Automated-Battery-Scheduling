@@ -457,12 +457,23 @@ function ago(ts) {
   if (s < 90) return s + ' s ago'; if (s < 5400) return Math.round(s / 60) + ' min ago';
   if (s < 129600) return Math.round(s / 3600) + ' h ago'; return Math.round(s / 86400) + ' days ago';
 }
+function limitsHint(b) {
+  const l = b && b.limits_kw, c = l && l.max_charge_kw, x = l && l.max_discharge_kw;
+  let t = 'Type a whole number of kilowatts.';
+  if (typeof c === 'number' && typeof x === 'number') {
+    t = (c > 0 || x > 0)
+      ? 'Right now the battery accepts up to ' + c + ' kW charging and ' + x + ' kW discharging.'
+      : 'The battery is not accepting power right now (it may be off or in standby), so a command cannot run yet.';
+  }
+  document.querySelectorAll('.limits-hint').forEach(function (el) { el.textContent = t; });
+}
 async function pollBanner() {
   try {
     const r = await fetch('/api/status');
     if (!r.ok) return;
     const d = await r.json(), a = d.battery && d.battery.authority;
     const on = !!(a && a.authority === 'operator_force_idle');
+    limitsHint(d.battery);
     document.getElementById('idle-banner').hidden = !on;
     if (on) {
       const m = /engaged by ([^:]+)/.exec(a.reason || '');
@@ -1062,13 +1073,13 @@ SCHEDULE_BODY = """
     <div class="formgrid ops-only">
       <div><label for="f-dir">Direction</label>
         <select id="f-dir" class="full"><option value="1">Charge (power in)</option><option value="-1">Discharge (power out)</option></select></div>
-      <div><label for="f-kw">Power (kW)</label><input id="f-kw" type="number" value="500" min="1" max="100000" step="1"></div>
+      <div><label for="f-kw">Power (kW)</label><input id="f-kw" type="number" min="1" max="100000" step="1" placeholder="e.g. 25" inputmode="numeric" aria-describedby="f-kw-hint"><p id="f-kw-hint" class="stat-hint limits-hint" style="margin:2px 0 0">Type a whole number of kilowatts.</p></div>
       <div class="wide"><label class="chk"><input type="radio" name="when" value="at" checked> At a set time</label>
         <label class="chk"><input type="radio" name="when" value="now"> Right now</label></div>
       <div><label for="f-date">Date</label><input id="f-date" type="date"></div>
       <div><label for="f-time">Start time</label><input id="f-time" type="time" value="09:00"></div>
       <div class="wide"><label for="f-len">Length</label>
-        <div class="splitrow"><input id="f-len" type="number" value="60" min="1" step="1">
+        <div class="splitrow"><input id="f-len" type="number" min="1" step="1" placeholder="e.g. 60">
           <select id="f-unit" class="full"><option value="60">minutes</option><option value="3600">hours</option></select></div></div>
       <div class="wide"><label class="chk"><input id="f-replace" type="checkbox"> Replace any event this one overlaps</label></div>
     </div>
@@ -1181,6 +1192,7 @@ function formRow() {
 }
 function preview() {
   const f = formRow();
+  if (f.error && !$('f-kw').value && !$('f-len').value) { $('f-preview').textContent = 'Fill in the power and the length, and this line will say exactly what will be added.'; return; }
   $('f-preview').textContent = f.error ? f.error : (f.kw > 0 ? 'Charge ' : 'Discharge ') + Math.abs(f.kw) + ' kW from ' + fullTime(f.start) + ', for ' + (f.len >= 3600 && f.len % 3600 === 0 ? f.len / 3600 + ' h' : Math.round(f.len / 60) + ' min') + ', ending at ' + shortTime(f.start + f.len) + '.';
 }
 ['f-dir', 'f-kw', 'f-date', 'f-time', 'f-len', 'f-unit'].forEach(function (id) { $(id).addEventListener('input', preview); });
@@ -1258,7 +1270,7 @@ $('imp-go').onclick = async function () {
 $('tpl').addEventListener('click', function (ev) {
   ev.preventDefault();
   const t = new Date(Date.now() + 86400000), d = dayKey(t.getTime() / 1000);
-  const blob = new Blob(['date,start_time,duration_minutes,direction,power_kw\\r\\n' + d + ',14:00,60,charge,500\\r\\n' + d + ',16:30,45,discharge,300\\r\\n'], {type: 'text/csv'});
+  const blob = new Blob(['date,start_time,duration_minutes,direction,power_kw\\r\\n' + d + ',14:00,60,charge,25\\r\\n' + d + ',16:30,45,discharge,20\\r\\n'], {type: 'text/csv'});
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'schedule-template.csv'; document.body.appendChild(a); a.click(); a.remove();
 });
 
@@ -1332,9 +1344,11 @@ OVERVIEW_BODY = """
       <input type="hidden" name="next" value="">
       <p class="stat-hint" style="margin:0 0 4px">Starts straight away. To start at a set time, or to line up several events, use <a href="/dashboard/schedule">Schedule</a>.</p>
       <label for="rn-power">Power (kW)</label>
-      <input id="rn-power" type="number" name="power_kw" value="500" min="1" max="100000" step="1" required>
-      <label for="rn-duration">Duration (seconds)</label>
-      <input id="rn-duration" type="number" name="duration_sec" value="3600" min="60" max="604800" step="1" required>
+      <input id="rn-power" type="number" name="power_kw" min="1" max="100000" step="1" placeholder="e.g. 25" inputmode="numeric" aria-describedby="rn-power-hint" required>
+      <p id="rn-power-hint" class="stat-hint limits-hint" style="margin:2px 0 0">Type a whole number of kilowatts.</p>
+      <label for="rn-duration">How long (seconds)</label>
+      <input id="rn-duration" type="number" name="duration_sec" min="60" max="604800" step="1" placeholder="e.g. 120" inputmode="numeric" aria-describedby="rn-duration-hint" required>
+      <p id="rn-duration-hint" class="stat-hint" style="margin:2px 0 0">At least 60. For example 120 is 2 minutes and 3600 is 1 hour.</p>
       <label class="chk"><input type="checkbox" name="replace" value="1"> Replace anything it overlaps</label>
       <div class="action-row">
         <button class="btn" type="submit" name="action" value="charge"><i class="ico ico-zap"></i>Charge</button>
